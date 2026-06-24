@@ -1,0 +1,29 @@
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from app.models.base import BaseModel
+
+class CRMNote(BaseModel):
+    __tablename__ = "crm_notes"
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False)
+    added_by    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    note        = Column(Text, nullable=False)
+    note_type   = Column(String(30), default="GENERAL")
+
+class CRMFollowup(BaseModel):
+    __tablename__ = "crm_followups"
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False)
+    created_by  = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    subject     = Column(String(200), nullable=False)
+    notes       = Column(Text, nullable=True)
+    due_date    = Column(DateTime, nullable=False)
+    status      = Column(String(20), default="PENDING")
+
+class CRMTask(BaseModel):
+    __tablename__ = "crm_tasks"
+    created_by  = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True)
+    title       = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    due_date    = Column(DateTime, nullable=True)
+    priority    = Column(String(20), default="MEDIUM")
+    status      = Column(String(20), default="OPEN")

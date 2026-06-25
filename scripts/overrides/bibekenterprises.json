@@ -1,434 +1,830 @@
 {
   "services": [
     {
-      "service_name": "Washing Machine General Service",
-      "meta_title": "Washing Machine General Service in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine General Service in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine General Service, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine General Service | Bibek Enterprises",
-      "og_description": "Professional Washing Machine General Service with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Water Purifier General Service",
+      "meta_title": "RO Water Purifier General Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Water Purifier General Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Water Purifier General Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Water Purifier General Service | Bibek Enterprises",
+      "og_description": "Professional RO Water Purifier General Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine General Service?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Water Purifier General Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Not Starting Repair",
-      "meta_title": "Washing Machine Not Starting Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Not Starting Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Not Starting Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Not Starting Repair | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Not Starting Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Filter Replacement Service",
+      "meta_title": "RO Filter Replacement Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Filter Replacement Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Filter Replacement Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Filter Replacement Service | Bibek Enterprises",
+      "og_description": "Professional RO Filter Replacement Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Not Starting Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Filter Replacement Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Water Leakage Repair",
-      "meta_title": "Washing Machine Water Leakage Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Water Leakage Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Water Leakage Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Water Leakage Repair | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Water Leakage Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Membrane Replacement Service",
+      "meta_title": "RO Membrane Replacement Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Membrane Replacement Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Membrane Replacement Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Membrane Replacement Service | Bibek Enterprises",
+      "og_description": "Professional RO Membrane Replacement Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Water Leakage Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Membrane Replacement Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Drainage Issue Repair",
-      "meta_title": "Washing Machine Drainage Issue Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Drainage Issue Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Drainage Issue Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Drainage Issue Repair | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Drainage Issue Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Water Leakage Repair",
+      "meta_title": "RO Water Leakage Repair in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Water Leakage Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Water Leakage Repair, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Water Leakage Repair | Bibek Enterprises",
+      "og_description": "Professional RO Water Leakage Repair with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Drainage Issue Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Water Leakage Repair?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Drum Repair Service",
-      "meta_title": "Washing Machine Drum Repair Service in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Drum Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Drum Repair Service, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Drum Repair Service | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Drum Repair Service with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Pump Repair Service",
+      "meta_title": "RO Pump Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Pump Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Pump Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Pump Repair Service | Bibek Enterprises",
+      "og_description": "Professional RO Pump Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Drum Repair Service?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Pump Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Motor Repair Service",
-      "meta_title": "Washing Machine Motor Repair Service in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Motor Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Motor Repair Service, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Motor Repair Service | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Motor Repair Service with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO PCB Repair Service",
+      "meta_title": "RO PCB Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO PCB Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO PCB Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO PCB Repair Service | Bibek Enterprises",
+      "og_description": "Professional RO PCB Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Motor Repair Service?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO PCB Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine PCB Repair Service",
-      "meta_title": "Washing Machine PCB Repair Service in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine PCB Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine PCB Repair Service, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine PCB Repair Service | Bibek Enterprises",
-      "og_description": "Professional Washing Machine PCB Repair Service with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Low Water Flow Repair",
+      "meta_title": "RO Low Water Flow Repair in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Low Water Flow Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Low Water Flow Repair, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Low Water Flow Repair | Bibek Enterprises",
+      "og_description": "Professional RO Low Water Flow Repair with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine PCB Repair Service?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Low Water Flow Repair?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Front Load Washing Machine Repair",
-      "meta_title": "Front Load Washing Machine Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Front Load Washing Machine Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Front Load Washing Machine Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Front Load Washing Machine Repair | Bibek Enterprises",
-      "og_description": "Professional Front Load Washing Machine Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Installation Service",
+      "meta_title": "RO Installation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Installation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Installation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Installation Service | Bibek Enterprises",
+      "og_description": "Professional RO Installation Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Front Load Washing Machine Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Installation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Top Load Washing Machine Repair",
-      "meta_title": "Top Load Washing Machine Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Top Load Washing Machine Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Top Load Washing Machine Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Top Load Washing Machine Repair | Bibek Enterprises",
-      "og_description": "Professional Top Load Washing Machine Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Uninstallation Service",
+      "meta_title": "RO Uninstallation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Uninstallation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Uninstallation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Uninstallation Service | Bibek Enterprises",
+      "og_description": "Professional RO Uninstallation Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Top Load Washing Machine Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Uninstallation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Semi-Automatic Washing Machine Repair",
-      "meta_title": "Semi-Automatic Washing Machine Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Semi-Automatic Washing Machine Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Semi-Automatic Washing Machine Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Semi-Automatic Washing Machine Repair | Bibek Enterprises",
-      "og_description": "Professional Semi-Automatic Washing Machine Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "RO Relocation Service",
+      "meta_title": "RO Relocation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional RO Relocation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "RO Relocation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "RO Relocation Service | Bibek Enterprises",
+      "og_description": "Professional RO Relocation Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Semi-Automatic Washing Machine Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in RO Relocation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Fully Automatic Washing Machine Repair",
-      "meta_title": "Fully Automatic Washing Machine Repair in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Fully Automatic Washing Machine Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Fully Automatic Washing Machine Repair, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Fully Automatic Washing Machine Repair | Bibek Enterprises",
-      "og_description": "Professional Fully Automatic Washing Machine Repair with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "Water Quality & TDS Check Service",
+      "meta_title": "Water Quality & TDS Check Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Water Quality & TDS Check Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Water Quality & TDS Check Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Water Quality & TDS Check Service | Bibek Enterprises",
+      "og_description": "Professional Water Quality & TDS Check Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Fully Automatic Washing Machine Repair?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in Water Quality & TDS Check Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     },
     {
-      "service_name": "Washing Machine Installation Service",
-      "meta_title": "Washing Machine Installation Service in Bhubaneswar | Bibek Enterprises",
-      "meta_description": "Book professional Washing Machine Installation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep washing machine service by experienced technicians at transparent pricing.",
-      "meta_keywords": "Washing Machine Installation Service, Washing Machine Repair Bhubaneswar, Washing Machine Service, Bibek Enterprises, Home Appliance Repair",
-      "og_title": "Washing Machine Installation Service | Bibek Enterprises",
-      "og_description": "Professional Washing Machine Installation Service with reliable doorstep service across Bhubaneswar and nearby cities.",
+      "service_name": "Geyser General Service",
+      "meta_title": "Geyser General Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser General Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser General Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser General Service | Bibek Enterprises",
+      "og_description": "Professional Geyser General Service with doorstep support across Bhubaneswar and nearby service areas.",
       "includes": [
         "Technician doorstep visit",
-        "Complete diagnosis and inspection",
-        "Functional testing",
+        "Complete inspection and diagnosis",
+        "Performance testing",
         "Safety inspection",
-        "Service report with recommendations"
+        "Service completion report"
       ],
       "excludes": [
         "Spare parts cost",
         "Major component replacement",
         "Electrical rewiring",
-        "Civil or plumbing work",
-        "Additional accessories"
+        "Civil/plumbing work",
+        "Additional materials not included"
       ],
       "faqs": [
         {
-          "q": "What is included in Washing Machine Installation Service?",
-          "a": "The service includes inspection, diagnosis, the requested service task, testing, and technician recommendations."
+          "q": "What is included in Geyser General Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
         },
         {
-          "q": "Do you service all washing machine brands?",
-          "a": "Yes. We service most major brands including LG, Samsung, Whirlpool, IFB, Bosch, Haier, Godrej, Panasonic and others."
-        },
-        {
-          "q": "Which areas do you cover?",
+          "q": "Which areas do you serve?",
           "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Not Heating Repair",
+      "meta_title": "Geyser Not Heating Repair in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Not Heating Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Not Heating Repair, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Not Heating Repair | Bibek Enterprises",
+      "og_description": "Professional Geyser Not Heating Repair with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Not Heating Repair?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Heating Element Replacement",
+      "meta_title": "Geyser Heating Element Replacement in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Heating Element Replacement in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Heating Element Replacement, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Heating Element Replacement | Bibek Enterprises",
+      "og_description": "Professional Geyser Heating Element Replacement with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Heating Element Replacement?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Thermostat Repair Service",
+      "meta_title": "Geyser Thermostat Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Thermostat Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Thermostat Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Thermostat Repair Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Thermostat Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Thermostat Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Water Leakage Repair",
+      "meta_title": "Geyser Water Leakage Repair in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Water Leakage Repair in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Water Leakage Repair, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Water Leakage Repair | Bibek Enterprises",
+      "og_description": "Professional Geyser Water Leakage Repair with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Water Leakage Repair?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Electrical Repair Service",
+      "meta_title": "Geyser Electrical Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Electrical Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Electrical Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Electrical Repair Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Electrical Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Electrical Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Instant Geyser Repair Service",
+      "meta_title": "Instant Geyser Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Instant Geyser Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Instant Geyser Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Instant Geyser Repair Service | Bibek Enterprises",
+      "og_description": "Professional Instant Geyser Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Instant Geyser Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Storage Geyser Repair Service",
+      "meta_title": "Storage Geyser Repair Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Storage Geyser Repair Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Storage Geyser Repair Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Storage Geyser Repair Service | Bibek Enterprises",
+      "og_description": "Professional Storage Geyser Repair Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Storage Geyser Repair Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Installation Service",
+      "meta_title": "Geyser Installation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Installation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Installation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Installation Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Installation Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Installation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Uninstallation Service",
+      "meta_title": "Geyser Uninstallation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Uninstallation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Uninstallation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Uninstallation Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Uninstallation Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Uninstallation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Relocation Service",
+      "meta_title": "Geyser Relocation Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Relocation Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Relocation Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Relocation Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Relocation Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Relocation Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
+        }
+      ]
+    },
+    {
+      "service_name": "Geyser Safety Inspection Service",
+      "meta_title": "Geyser Safety Inspection Service in Bhubaneswar | Bibek Enterprises",
+      "meta_description": "Book professional Geyser Safety Inspection Service in Bhubaneswar with Bibek Enterprises. Expert doorstep service by experienced technicians with transparent pricing.",
+      "meta_keywords": "Geyser Safety Inspection Service, Bhubaneswar, Bibek Enterprises, Home Appliance Repair",
+      "og_title": "Geyser Safety Inspection Service | Bibek Enterprises",
+      "og_description": "Professional Geyser Safety Inspection Service with doorstep support across Bhubaneswar and nearby service areas.",
+      "includes": [
+        "Technician doorstep visit",
+        "Complete inspection and diagnosis",
+        "Performance testing",
+        "Safety inspection",
+        "Service completion report"
+      ],
+      "excludes": [
+        "Spare parts cost",
+        "Major component replacement",
+        "Electrical rewiring",
+        "Civil/plumbing work",
+        "Additional materials not included"
+      ],
+      "faqs": [
+        {
+          "q": "What is included in Geyser Safety Inspection Service?",
+          "a": "The service includes inspection, diagnosis, required service work, testing, and technician recommendations."
+        },
+        {
+          "q": "Which areas do you serve?",
+          "a": "We provide doorstep service across Bhubaneswar, Cuttack, Khordha, Jatni, Pipili, Choudwar, Barang, Balianta and Balipatna."
+        },
+        {
+          "q": "Why choose Bibek Enterprises?",
+          "a": "Experienced technicians, transparent pricing, reliable doorstep support, and quality workmanship."
         }
       ]
     }

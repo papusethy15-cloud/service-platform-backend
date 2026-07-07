@@ -1,8 +1,7 @@
 #!/bin/bash
-# Run ENUM fixes separately — ALTER TYPE ADD VALUE cannot run inside a transaction.
-# Reads DATABASE_URL from .env automatically.
+# Run ENUM fixes — ALTER TYPE ADD VALUE cannot run inside a transaction.
+# Parses host/port/user/dbname from DATABASE_URL, prompts for password.
 
-# Parse DATABASE_URL from .env
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
 
@@ -13,21 +12,32 @@ fi
 
 RAW_URL=$(grep '^DATABASE_URL=' "$ENV_FILE" | cut -d= -f2-)
 
-# URL-decode %40 -> @ and %23 -> #
-DECODED_URL=$(python3 -c "import urllib.parse, sys; print(urllib.parse.unquote(sys.argv[1]))" "$RAW_URL")
+# Parse components via python (handles %40/%23 decoding and URL parsing properly)
+read DB_HOST DB_PORT DB_USER DB_NAME < <(python3 -c "
+import urllib.parse, sys
+url = urllib.parse.urlparse(urllib.parse.unquote(sys.argv[1]))
+print(url.hostname, url.port or 5432, url.username, url.path.lstrip('/'))
+" "$RAW_URL")
 
-echo "Using connection: $DECODED_URL"
+echo "Host: $DB_HOST  Port: $DB_PORT  User: $DB_USER  DB: $DB_NAME"
 echo ""
+read -s -p "Enter password for $DB_USER: " PGPASSWORD
+echo ""
+export PGPASSWORD
+
+run_psql() {
+    psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "$1"
+}
 
 echo "Adding PAY_LATER to paymentmethod enum..."
-psql "$DECODED_URL" -c "ALTER TYPE paymentmethod ADD VALUE IF NOT EXISTS 'PAY_LATER';"
+run_psql "ALTER TYPE paymentmethod ADD VALUE IF NOT EXISTS 'PAY_LATER';"
 
 echo "Adding CANCELLED to paymentstatus enum..."
-psql "$DECODED_URL" -c "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED';"
+run_psql "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED';"
 
 echo ""
 echo "Verifying enum values..."
-psql "$DECODED_URL" -c "
+run_psql "
 SELECT t.typname AS enum_name, e.enumlabel AS value
 FROM pg_enum e
 JOIN pg_type t ON t.oid = e.enumtypid
@@ -36,3 +46,4 @@ ORDER BY t.typname, e.enumsortorder;
 "
 
 echo "Done."
+unset PGPASSWORD

@@ -10,6 +10,9 @@ class PaymentMethod(str, enum.Enum):
     CASH = "CASH"
     BANK_TRANSFER = "BANK_TRANSFER"
     WALLET = "WALLET"
+    # Customer payment deferred to a later date/time (due_collect_at on the
+    # transaction). Replaces the old reference_number=='PAY_LATER' sentinel hack.
+    PAY_LATER = "PAY_LATER"
 
 
 class PaymentStatus(str, enum.Enum):
@@ -18,6 +21,8 @@ class PaymentStatus(str, enum.Enum):
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
     PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
+    # Used to void stale PAY_LATER pending records when a real payment is collected.
+    CANCELLED = "CANCELLED"
 
 
 class CashCollectionStatus(str, enum.Enum):
@@ -55,6 +60,15 @@ class PaymentTransaction(BaseModel):
         nullable=True,
         default=None,
     )
+
+    # ── Pay Later ────────────────────────────────────────────────────────────
+    # Date/time the customer promised to pay by. Reminder sweep (see
+    # app/main.py) notifies CCO/admin/technician once this is reached.
+    due_collect_at   = Column(DateTime(timezone=True), nullable=True)
+    # Last time a "please collect payment" reminder was sent for this
+    # transaction. Null until the first reminder fires; re-reminds every
+    # 24h thereafter while still PENDING.
+    last_reminder_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class CashCollectionRecord(BaseModel):

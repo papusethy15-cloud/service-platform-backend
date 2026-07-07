@@ -1,13 +1,24 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
+from app.utils.phone import normalize_mobile
 
 class SendOTPRequest(BaseModel):
     mobile: str
     country_code: str = "+91"
 
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def _normalize_mobile(cls, v):
+        return normalize_mobile(v)
+
 class VerifyOTPRequest(BaseModel):
     mobile: str
     otp: str
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def _normalize_mobile(cls, v):
+        return normalize_mobile(v)
 
 class LoginRequest(BaseModel):
     email: str
@@ -24,6 +35,19 @@ class TokenResponse(BaseModel):
     role: str
     name: str
 
+class FirebaseLoginRequest(BaseModel):
+    firebase_id_token: str
+
+class VerifyOTPFirebaseRequest(BaseModel):
+    mobile: str
+    otp: str
+    firebase_id_token: str
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def _normalize_mobile(cls, v):
+        return normalize_mobile(v)
+
 class UpdateProfileRequest(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -35,6 +59,11 @@ class ChangePasswordRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     mobile: str
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def _normalize_mobile(cls, v):
+        return normalize_mobile(v)
 
 class UserResponse(BaseModel):
     id: str

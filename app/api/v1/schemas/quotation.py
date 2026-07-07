@@ -27,10 +27,27 @@ class UpdateQuotationRequest(BaseModel):
 
 
 class AddQuotationServiceRequest(BaseModel):
-    service_id: str
+    service_id: Optional[str] = None       # None when adding a custom/new service
     quantity: int = 1
     unit_price: Optional[float] = None
     appliance_label: Optional[str] = None
+    # Custom service fields (used when service_id is None)
+    custom_service_name: Optional[str] = None   # name technician typed
+    custom_base_price:   Optional[float] = None  # price technician set
+
+
+class VerifyCustomServiceRequest(BaseModel):
+    """Admin: promote a tech-suggested service item to the catalogue."""
+    category_id:   str           # which category to put the new service in
+    name:          str           # final service name (admin may rename)
+    base_price:    float         # official base price
+    gst_percent:   float = 18.0
+    duration_mins: int   = 60
+    is_visible:    bool  = True
+    domain_id:     Optional[str] = None   # link to domain if needed
+    # Commission to set for this service in the technician's group
+    commission_type:  Optional[str]   = None   # PERCENTAGE | FLAT
+    commission_value: Optional[float] = None
 
 
 class AddQuotationPartRequest(BaseModel):

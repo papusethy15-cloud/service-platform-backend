@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
+from app.utils.phone import normalize_mobile
 
 class CreateCustomerRequest(BaseModel):
     name: str
@@ -16,6 +17,18 @@ class CreateCustomerRequest(BaseModel):
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
+
+    @field_validator("mobile", mode="before")
+    @classmethod
+    def _normalize_mobile(cls, v):
+        return normalize_mobile(v)
+
+    @field_validator("alternate_mobile", mode="before")
+    @classmethod
+    def _normalize_alternate_mobile(cls, v):
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return normalize_mobile(v)
 
 class UpdateCustomerRequest(BaseModel):
     name: Optional[str] = None
@@ -34,13 +47,20 @@ class UpdateCustomerRequest(BaseModel):
             return None
         return v
 
-    @field_validator("alternate_mobile", "gst_number", "gst_name", "gst_address", mode="before")
+    @field_validator("gst_number", "gst_name", "gst_address", mode="before")
     @classmethod
     def empty_str_to_none(cls, v):
         """Convert empty strings to None for optional string fields."""
         if isinstance(v, str) and v.strip() == "":
             return None
         return v
+
+    @field_validator("alternate_mobile", mode="before")
+    @classmethod
+    def _normalize_alternate_mobile(cls, v):
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return normalize_mobile(v)
 
 class CustomerAddressRequest(BaseModel):
     label: str = "Home"
@@ -52,6 +72,7 @@ class CustomerAddressRequest(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     is_default: bool = False
+    location_source: Optional[str] = None  # 'gps'|'geocoded'|'manual'|'whatsapp'
 
 class CustomerResponse(BaseModel):
     id: str

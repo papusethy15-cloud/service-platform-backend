@@ -27,6 +27,11 @@ class BookingStatus(str, enum.Enum):
     CLOSED               = "CLOSED"
     SETTLED              = "SETTLED"
     QUOTATION_APPROVED   = "QUOTATION_APPROVED"
+    # Customer/technician requested cancellation before technician arrival —
+    # awaiting admin/CCO to confirm (→ CANCELLED) or reject (→ restored to
+    # pre_cancel_status). Admin/CCO-initiated cancellations skip this and go
+    # straight to CANCELLED since they already carry that authority.
+    CANCELLATION_REQUESTED = "CANCELLATION_REQUESTED"
 
 class BookingSource(str, enum.Enum):
     WEBSITE     = "WEBSITE"
@@ -68,7 +73,29 @@ class Booking(BaseModel):
     total_amount     = Column(Float, default=0.0)
     priority         = Column(String(20), default="NORMAL")
     cancelled_reason = Column(Text, nullable=True)
+    # Status the booking was in right before a CANCELLATION_REQUESTED was raised,
+    # so admin/CCO rejecting the request can restore it exactly. Cleared once
+    # the request is resolved (confirmed or rejected).
+    pre_cancel_status = Column(String(30), nullable=True)
+    # Status the booking was in RIGHT BEFORE it was set to RESCHEDULED,
+    # so the technician/CCO/admin can resume at the correct repair stage
+    # after the rescheduled visit happens. Examples: INSPECTING, IN_PROGRESS.
+    # Cleared (set to None) when the booking advances past RESCHEDULED.
+    pre_reschedule_status = Column(String(30), nullable=True)
     domain_id        = Column(UUID(as_uuid=True), ForeignKey("domains.id"), nullable=True)
+    # Set when this booking was created via customer "report an issue" within
+    # 10 days of the original booking's closure (repeat-complaint flow). Used
+    # at settlement time to resolve the technician who did the original job.
+    repeat_of_booking_id = Column(UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=True)
+    city_id          = Column(UUID(as_uuid=True), ForeignKey("cities.id"),  nullable=True)
+    # Inspection data — saved when technician OR CCO submits inspection (INSPECTING → IN_PROGRESS)
+    inspection_notes         = Column(Text, nullable=True)
+    inspection_photos        = Column(Text, nullable=True)  # JSON array of Cloudinary URLs
+    inspection_submitted_by  = Column(String(20), nullable=True)  # 'TECHNICIAN' | 'CCO' | 'ADMIN'
+
+    # Technician rates the customer after job completion
+    technician_to_customer_rating = Column(Float, nullable=True)
+    technician_to_customer_notes  = Column(Text, nullable=True)
 
 class BookingStatusLog(BaseModel):
     __tablename__ = "booking_status_logs"

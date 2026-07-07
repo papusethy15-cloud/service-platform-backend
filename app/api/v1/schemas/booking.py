@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional, List, Union
+from datetime import datetime, date
 
 class CreateBookingRequest(BaseModel):
     # Admin/CCO can pass customer_id explicitly
@@ -18,6 +18,7 @@ class CreateBookingRequest(BaseModel):
     source:          str = "CALL_CENTER"
     priority:        Optional[str] = "NORMAL"
     domain_id:       Optional[str] = None
+    city_id:         Optional[str] = None
     # Duplicate override: pass True to allow booking same service+address
     force_duplicate: Optional[bool] = False
     # Coupon fields (optional — sent when customer applies a coupon code)
@@ -25,8 +26,6 @@ class CreateBookingRequest(BaseModel):
     coupon_code:     Optional[str] = None
     coupon_discount: Optional[float] = 0.0
     base_amount:     Optional[float] = None
-    # Coupon
-    coupon_code:     Optional[str]  = None
 
 class UpdateBookingRequest(BaseModel):
     scheduled_date:  Optional[datetime] = None
@@ -34,14 +33,24 @@ class UpdateBookingRequest(BaseModel):
     notes:           Optional[str] = None
     priority:        Optional[str] = None
 
+class SubmitInspectionRequest(BaseModel):
+    notes:      str
+    photo_urls: List[str] = []
+    # When CCO or admin submits inspection on behalf of the technician
+    submitted_by_role: Optional[str] = None  # 'TECHNICIAN' | 'CCO' | 'ADMIN'
+
 class RescheduleBookingRequest(BaseModel):
-    scheduled_date:  datetime
+    scheduled_date:  Union[datetime, date]
     scheduled_slot:  Optional[str] = None
     reason:          Optional[str] = None
 
 class AssignTechnicianRequest(BaseModel):
     technician_id: str
     notes:         Optional[str] = None
+
+class VisitingChargeRequest(BaseModel):
+    amount: float
+    notes: str = "Customer declined repair — visiting charge applied"
 
 class CancelBookingRequest(BaseModel):
     reason: str

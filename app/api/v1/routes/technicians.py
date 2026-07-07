@@ -346,6 +346,8 @@ def _serialize(t: Technician, full: bool = False) -> dict:
         "experience_years": t.experience_years,
         "rating": t.rating,
         "total_jobs": t.total_jobs,
+        "is_online": bool(getattr(t, "is_online", False)),
+        "auto_assign_eligible": bool(getattr(t, "auto_assign_eligible", True)),
     }
     if full:
         base.update({

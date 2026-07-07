@@ -58,14 +58,22 @@ class Quotation(BaseModel):
 class QuotationServiceItem(BaseModel):
     __tablename__ = "quotation_service_items"
 
-    quotation_id = Column(UUID(as_uuid=True), ForeignKey("quotations.id"), nullable=False)
-    service_id = Column(UUID(as_uuid=True), ForeignKey("services.id"), nullable=False)
-    service_name = Column(String(200), nullable=False)
-    quantity = Column(Integer, default=1)
-    unit_price = Column(Float, default=0.0)
-    total_price = Column(Float, default=0.0)
-    appliance_label = Column(String(300), nullable=True)          # NEW: which appliance this service belongs to
-    is_repeat_complaint = Column(Boolean, default=False)           # NEW: exclude from invoice total
+    quotation_id         = Column(UUID(as_uuid=True), ForeignKey("quotations.id"), nullable=False)
+    # nullable=True to support tech-suggested custom services not yet in the DB catalogue
+    service_id           = Column(UUID(as_uuid=True), ForeignKey("services.id"), nullable=True)
+    service_name         = Column(String(200), nullable=False)
+    quantity             = Column(Integer, default=1)
+    unit_price           = Column(Float, default=0.0)
+    total_price          = Column(Float, default=0.0)
+    appliance_label      = Column(String(300), nullable=True)
+    is_repeat_complaint  = Column(Boolean, default=False)
+    # Custom / tech-suggested service fields
+    # 0 = normal service from catalogue
+    # 1 = tech-suggested, pending admin verify (service_id is NULL until verified)
+    # 2 = admin verified and promoted to catalogue (service_id filled in)
+    is_pending_verify    = Column(Integer, default=0, nullable=False)
+    custom_service_name  = Column(Text, nullable=True)   # original name the tech typed
+    tech_commission_override = Column(Float, nullable=True)  # set by admin after verify
 
 
 class QuotationPartItem(BaseModel):

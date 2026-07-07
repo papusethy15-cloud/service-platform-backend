@@ -28,3 +28,22 @@ class WalletTransaction(Base):
     description = Column(Text)
     status = Column(String(20), default="SUCCESS")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class WithdrawalRequest(Base):
+    __tablename__ = "withdrawal_requests"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    technician_id = Column(UUID(as_uuid=True), ForeignKey("technicians.id"), nullable=False)
+    wallet_id = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    status = Column(String(20), default="PENDING")  # PENDING, APPROVED, REJECTED
+    upi_id = Column(String(200), nullable=True)
+    bank_account = Column(String(200), nullable=True)
+    bank_ifsc = Column(String(20), nullable=True)
+    bank_name = Column(String(200), nullable=True)
+    notes = Column(Text, nullable=True)
+    admin_notes = Column(Text, nullable=True)
+    reviewed_by = Column(UUID(as_uuid=True), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    wallet_txn_id = Column(UUID(as_uuid=True), ForeignKey("wallet_transactions.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

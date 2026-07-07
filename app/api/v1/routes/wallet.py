@@ -341,3 +341,189 @@ async def request_withdrawal(
         data={"balance": w.balance},
         message="Withdrawal requested",
     )
+
+
+# ─── Admin: list all withdrawal requests ────────────────────────
+@router.get("/withdrawal-requests", summary="Admin: list all withdrawal requests [Admin]")
+async def admin_list_withdrawal_requests(
+    page: int = 1,
+    per_page: int = 20,
+    status: str | None = None,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.wallet import WithdrawalRequest, Wallet
+    from app.models.technician import Technician
+    from app.models.user import User
+    from sqlalchemy import func
+
+    q = select(WithdrawalRequest)
+    if status:
+        q = q.where(WithdrawalRequest.status == status.upper())
+    total = (await db.execute(select(func.count(WithdrawalRequest.id)).where(
+        *([WithdrawalRequest.status == status.upper()] if status else [])
+    ))).scalar_one()
+    items_r = await db.execute(q.order_by(WithdrawalRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
+    items = items_r.scalars().all()
+
+    rows = []
+    for wr in items:
+        tech_r = await db.execute(select(Technician).where(Technician.id == wr.technician_id))
+        tech = tech_r.scalar_one_or_none()
+        user_r = None
+        if tech:
+            user_r = await db.execute(select(User).where(User.id == tech.user_id))
+            user_r = user_r.scalar_one_or_none()
+        rows.append({
+            "id": str(wr.id),
+            "technician_id": str(wr.technician_id),
+            "technician_name": f"{user_r.first_name or ''} {user_r.last_name or ''}".strip() if user_r else "Unknown",
+            "technician_code": tech.employee_code if tech else None,
+            "technician_mobile": user_r.mobile if user_r else None,
+            "amount": wr.amount,
+            "status": wr.status,
+            "upi_id": wr.upi_id,
+            "bank_account": wr.bank_account,
+            "bank_ifsc": wr.bank_ifsc,
+            "bank_name": wr.bank_name,
+            "notes": wr.notes,
+            "admin_notes": wr.admin_notes,
+            "reviewed_at": wr.reviewed_at.isoformat() if wr.reviewed_at else None,
+            "created_at": wr.created_at.isoformat() if wr.created_at else None,
+        })
+    return success_response(data={
+        "items": rows, "total": total,
+        "page": page, "pages": max(1, -(-total // per_page))
+    })
+
+
+# ─── Admin: approve or reject a withdrawal request ──────────────
+class WithdrawalReviewPayload(BaseModel):
+    action: str          # "APPROVE" or "REJECT"
+    admin_notes: str | None = None
+
+@router.post("/withdrawal-requests/{request_id}/review", summary="Admin: approve or reject withdrawal [Admin]")
+async def admin_review_withdrawal(
+    request_id: UUID,
+    payload: WithdrawalReviewPayload,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.wallet import WithdrawalRequest, Wallet, WalletTransaction
+    from datetime import datetime, timezone
+
+    action = payload.action.upper()
+    if action not in ("APPROVE", "REJECT"):
+        raise HTTPException(400, "action must be APPROVE or REJECT")
+
+    wr_r = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == request_id))
+    wr = wr_r.scalar_one_or_none()
+    if not wr:
+        raise HTTPException(404, "Withdrawal request not found")
+    if wr.status != "PENDING":
+        raise HTTPException(400, f"Request is already {wr.status}")
+
+    now = datetime.now(timezone.utc)
+
+    if action == "APPROVE":
+        # Deduct from wallet now
+        w_r = await db.execute(select(Wallet).where(Wallet.id == wr.wallet_id))
+        w = w_r.scalar_one_or_none()
+        if not w:
+            raise HTTPException(404, "Wallet not found")
+        if (w.balance or 0) < wr.amount:
+            raise HTTPException(400, f"Insufficient wallet balance: ₹{w.balance:.2f}")
+
+        balance_before = w.balance or 0
+        w.balance = round(balance_before - wr.amount, 2)
+        w.total_withdrawn = round((w.total_withdrawn or 0) + wr.amount, 2)
+
+        txn = WalletTransaction(
+            wallet_id=w.id,
+            transaction_type="WITHDRAWAL",
+            amount=wr.amount,
+            balance_before=balance_before,
+            balance_after=w.balance,
+            description=f"Withdrawal approved by admin. {payload.admin_notes or ''}".strip(),
+            status="SUCCESS",
+        )
+        db.add(txn)
+        await db.flush()
+        wr.wallet_txn_id = txn.id
+        wr.status = "APPROVED"
+    else:
+        wr.status = "REJECTED"
+
+    wr.admin_notes = payload.admin_notes
+    wr.reviewed_by = UUID(current_user["user_id"])
+    wr.reviewed_at = now
+
+    await db.commit()
+    return success_response(data={"status": wr.status}, message=f"Withdrawal request {wr.status.lower()}")
+
+
+# ─── Admin: list settled bookings (settlements page) ────────────
+@router.get("/settlements", summary="Admin: list settled bookings with commission summary [Admin]")
+async def admin_list_settlements(
+    page: int = 1,
+    per_page: int = 20,
+    technician_id: str | None = None,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.booking import Booking, BookingStatus
+    from app.models.commission import Commission
+    from app.models.technician import Technician
+    from app.models.user import User
+    from sqlalchemy import func
+
+    q = select(Booking).where(Booking.status == BookingStatus.CLOSED)
+    count_q = select(func.count(Booking.id)).where(Booking.status == BookingStatus.CLOSED)
+    if technician_id:
+        q = q.where(Booking.assigned_technician_id == UUID(technician_id))
+        count_q = count_q.where(Booking.assigned_technician_id == UUID(technician_id))
+
+    total = (await db.execute(count_q)).scalar_one()
+    bookings_r = await db.execute(
+        q.order_by(Booking.updated_at.desc()).offset((page - 1) * per_page).limit(per_page)
+    )
+    bookings = bookings_r.scalars().all()
+
+    rows = []
+    for b in bookings:
+        tech, user = None, None
+        if b.assigned_technician_id:
+            tech_r = await db.execute(select(Technician).where(Technician.id == b.assigned_technician_id))
+            tech = tech_r.scalar_one_or_none()
+            if tech:
+                user_r = await db.execute(select(User).where(User.id == tech.user_id))
+                user = user_r.scalar_one_or_none()
+
+        # Fetch commissions for this booking
+        comm_r = await db.execute(select(Commission).where(Commission.booking_id == b.id))
+        comms = comm_r.scalars().all()
+        total_commission = sum(c.amount or 0 for c in comms)
+        comm_status = comms[0].status if comms else None
+        comm_paid = all(c.status == "PAID" for c in comms) if comms else False
+
+        rows.append({
+            "booking_id": str(b.id),
+            "booking_number": b.booking_number,
+            "customer_name": b.customer_name,
+            "customer_mobile": b.customer_mobile,
+            "total_amount": b.final_amount or b.quoted_amount or 0,
+            "technician_id": str(b.assigned_technician_id) if b.assigned_technician_id else None,
+            "technician_name": f"{user.first_name or ''} {user.last_name or ''}".strip() if user else "Unassigned",
+            "technician_code": tech.employee_code if tech else None,
+            "commission_total": total_commission,
+            "commission_count": len(comms),
+            "commission_status": comm_status,
+            "commission_paid": comm_paid,
+            "settled_at": b.updated_at.isoformat() if b.updated_at else None,
+            "created_at": b.created_at.isoformat() if b.created_at else None,
+        })
+
+    return success_response(data={
+        "items": rows, "total": total,
+        "page": page, "pages": max(1, -(-total // per_page))
+    })

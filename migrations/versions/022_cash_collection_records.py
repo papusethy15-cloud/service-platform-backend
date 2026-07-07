@@ -15,47 +15,61 @@ depends_on = None
 
 
 def upgrade():
-    # 1. Add new columns to payment_transactions
-    op.add_column('payment_transactions',
-        sa.Column('collected_by_role', sa.String(30), nullable=True)
-    )
+    bind = op.get_bind()
 
-    # Create enum types
-    cash_collection_status = postgresql.ENUM(
-        'PENDING', 'COLLECTED',
-        name='cashcollectionstatus',
-        create_type=True
-    )
-    cash_collection_status.create(op.get_bind(), checkfirst=True)
+    # ── payment_transactions: add columns idempotently ────────────────────────
+    bind.execute(sa.text("""
+        ALTER TABLE payment_transactions
+            ADD COLUMN IF NOT EXISTS collected_by_role VARCHAR(30)
+    """))
 
-    op.add_column('payment_transactions',
-        sa.Column('cash_collection_status',
-                  sa.Enum('PENDING', 'COLLECTED', name='cashcollectionstatus'),
-                  nullable=True)
-    )
+    # Create enum type if not exists
+    bind.execute(sa.text("""
+        DO $$ BEGIN
+            CREATE TYPE cashcollectionstatus AS ENUM ('PENDING', 'COLLECTED');
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
 
-    # 2. Create cash_collection_records table
-    op.create_table(
-        'cash_collection_records',
-        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,
-                  server_default=sa.text('gen_random_uuid()')),
-        sa.Column('payment_transaction_id', postgresql.UUID(as_uuid=True),
-                  sa.ForeignKey('payment_transactions.id'), nullable=False, unique=True),
-        sa.Column('booking_id',    postgresql.UUID(as_uuid=True), sa.ForeignKey('bookings.id'),    nullable=False),
-        sa.Column('invoice_id',    postgresql.UUID(as_uuid=True), sa.ForeignKey('invoices.id'),    nullable=False),
-        sa.Column('technician_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('technicians.id'), nullable=False),
-        sa.Column('customer_id',   postgresql.UUID(as_uuid=True), sa.ForeignKey('customers.id'),   nullable=False),
-        sa.Column('amount',   sa.Float, nullable=False),
-        sa.Column('status',   sa.Enum('PENDING', 'COLLECTED', name='cashcollectionstatus'), nullable=False, server_default='PENDING'),
-        sa.Column('collected_by', postgresql.UUID(as_uuid=True), sa.ForeignKey('users.id'), nullable=True),
-        sa.Column('collected_at', sa.DateTime, nullable=True),
-        sa.Column('notes',     sa.Text, nullable=True),
-        sa.Column('is_active', sa.Boolean, nullable=False, server_default='true'),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
-        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
-    )
-    op.create_index('ix_cash_collection_technician', 'cash_collection_records', ['technician_id'])
-    op.create_index('ix_cash_collection_status',     'cash_collection_records', ['status'])
+    bind.execute(sa.text("""
+        ALTER TABLE payment_transactions
+            ADD COLUMN IF NOT EXISTS cash_collection_status cashcollectionstatus
+    """))
+
+    # ── cash_collection_records table ─────────────────────────────────────────
+    table_exists = bind.execute(sa.text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='cash_collection_records')"
+    )).scalar()
+
+    if not table_exists:
+        op.create_table(
+            'cash_collection_records',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,
+                      server_default=sa.text('gen_random_uuid()')),
+            sa.Column('payment_transaction_id', postgresql.UUID(as_uuid=True),
+                      sa.ForeignKey('payment_transactions.id'), nullable=False, unique=True),
+            sa.Column('booking_id',    postgresql.UUID(as_uuid=True), sa.ForeignKey('bookings.id'),    nullable=False),
+            sa.Column('invoice_id',    postgresql.UUID(as_uuid=True), sa.ForeignKey('invoices.id'),    nullable=False),
+            sa.Column('technician_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('technicians.id'), nullable=False),
+            sa.Column('customer_id',   postgresql.UUID(as_uuid=True), sa.ForeignKey('customers.id'),   nullable=False),
+            sa.Column('amount',   sa.Float,   nullable=False),
+            sa.Column('status',   sa.Enum('PENDING', 'COLLECTED', name='cashcollectionstatus'),
+                      nullable=False, server_default='PENDING'),
+            sa.Column('collected_by', postgresql.UUID(as_uuid=True), sa.ForeignKey('users.id'), nullable=True),
+            sa.Column('collected_at', sa.DateTime, nullable=True),
+            sa.Column('notes',     sa.Text,    nullable=True),
+            sa.Column('is_active', sa.Boolean, nullable=False, server_default='true'),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
+        )
+
+    # Indexes — use IF NOT EXISTS (Postgres 9.5+)
+    bind.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_cash_collection_technician ON cash_collection_records (technician_id)"
+    ))
+    bind.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_cash_collection_status ON cash_collection_records (status)"
+    ))
 
 
 def downgrade():

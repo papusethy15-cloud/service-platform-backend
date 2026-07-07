@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Date, Time, Float
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, Date, Time, Float, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.models.base import Base
@@ -13,6 +13,7 @@ class Attendance(Base):
     check_out = Column(DateTime(timezone=True))
     check_in_lat = Column(Float)
     check_in_lng = Column(Float)
+    accumulated_seconds = Column(Integer, nullable=False, default=0)  # total worked time today across all sessions
     status = Column(String(20), default="PRESENT")  # PRESENT, ABSENT, HALF_DAY, LEAVE
     notes = Column(Text)
     approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))

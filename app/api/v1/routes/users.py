@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AdminOnly, require_roles
+from app.api.deps import AdminOnly, AnyStaff, require_roles
 from app.api.v1.schemas.users import (
     CreateInternalUserRequest,
     UpdateInternalUserRequest,
@@ -99,6 +99,11 @@ def _serialize_user(user: User):
         "is_verified": user.is_verified,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat(),
+        "profile_image": user.profile_image,
+        "id_proof_url": user.id_proof_url,
+        "id_proof_type": user.id_proof_type,
+        "address_proof_url": user.address_proof_url,
+        "address_proof_type": user.address_proof_type,
     }
 
 
@@ -367,6 +372,11 @@ async def create_user(
         password_hash=hash_password(payload.password),
         role=role,
         city=payload.city,
+        profile_image=payload.profile_image,
+        id_proof_url=payload.id_proof_url,
+        id_proof_type=payload.id_proof_type,
+        address_proof_url=payload.address_proof_url,
+        address_proof_type=payload.address_proof_type,
         is_verified=True,
     )
     db.add(user)
@@ -451,6 +461,16 @@ async def update_user(
         user.is_verified = payload.is_verified
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.profile_image is not None:
+        user.profile_image = payload.profile_image
+    if payload.id_proof_url is not None:
+        user.id_proof_url = payload.id_proof_url
+    if payload.id_proof_type is not None:
+        user.id_proof_type = payload.id_proof_type
+    if payload.address_proof_url is not None:
+        user.address_proof_url = payload.address_proof_url
+    if payload.address_proof_type is not None:
+        user.address_proof_type = payload.address_proof_type
     await db.commit()
     return success_response(data=_serialize_user(user), message="User updated successfully")
 
@@ -467,3 +487,22 @@ async def deactivate_user(
     user.is_active = False
     await db.commit()
     return success_response(message="User deactivated successfully")
+
+
+@router.post("/me/fcm-token", summary="Register FCM push token for current admin/CCO user [Staff]")
+async def register_admin_fcm_token(
+    payload: dict,
+    current_user: dict = Depends(AnyStaff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allows admin/CCO/tech users to register their browser/device FCM token for push notifications."""
+    token = (payload.get("fcm_token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="fcm_token is required")
+    from uuid import UUID as _UUID
+    user = (await db.execute(select(User).where(User.id == _UUID(current_user["user_id"])))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.fcm_token = token
+    await db.commit()
+    return success_response(message="FCM token registered")

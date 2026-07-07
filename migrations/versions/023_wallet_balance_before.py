@@ -13,9 +13,11 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
-    op.add_column('wallet_transactions',
-        sa.Column('balance_before', sa.Float, nullable=True)
-    )
+    bind = op.get_bind()
+    bind.execute(sa.text("""
+        ALTER TABLE wallet_transactions
+            ADD COLUMN IF NOT EXISTS balance_before DOUBLE PRECISION
+    """))
 
 def downgrade():
     op.drop_column('wallet_transactions', 'balance_before')

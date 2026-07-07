@@ -34,6 +34,24 @@ from app.utils.response import success_response
 router = APIRouter()
 
 
+async def _ensure_staff_or_self(technician_id: UUID, current_user: dict, db: AsyncSession):
+    """Allow AnyStaff roles to view any technician's stock, but a TECHNICIAN
+    caller may only view their own — prevents one captain from pulling
+    another captain's assigned-parts records via this endpoint."""
+    role = current_user.get("role")
+    if role in ("SUPER_ADMIN", "ADMIN", "CCO", "ACCOUNTANT", "INVENTORY_MANAGER"):
+        return
+    if role == "TECHNICIAN":
+        from app.models.technician import Technician
+        tech = (await db.execute(
+            select(Technician).where(Technician.user_id == UUID(current_user["user_id"]))
+        )).scalar_one_or_none()
+        if tech and tech.id == technician_id:
+            return
+        raise HTTPException(403, "You can only view your own inventory")
+    raise HTTPException(403, "Not authorized")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper — lazy-import models (avoids circular at startup)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1314,12 +1332,13 @@ async def damage_stock(
 # TECHNICIAN STOCK VIEW
 # ══════════════════════════════════════════════════════════════════════════════
 
-@router.get("/technician/{technician_id}", summary="Technician's current stock [Staff]")
+@router.get("/technician/{technician_id}", summary="Technician's current stock [Staff or self]")
 async def technician_stock(
     technician_id: UUID,
-    current_user: dict = Depends(AnyStaff),
+    current_user: dict = Depends(AnyAuthenticated),
     db: AsyncSession = Depends(get_db)
 ):
+    await _ensure_staff_or_self(technician_id, current_user, db)
     from app.models.inventory import TechnicianStock, InventoryItem
     rows = (await db.execute(
         select(TechnicianStock, InventoryItem)
@@ -1331,18 +1350,21 @@ async def technician_stock(
         "item_id": str(ts.item_id), "item_name": item.name, "sku": item.sku,
         "unit": item.unit, "quantity": ts.quantity,
         "assigned_qty": ts.assigned_qty, "consumed_qty": ts.consumed_qty,
-        "returned_qty": ts.returned_qty
+        "returned_qty": ts.returned_qty,
+        "selling_price": float(item.selling_price or 0.0),
+        "cost_price": float(item.cost_price or 0.0),
     } for ts, item in rows])
 
 
-@router.get("/technician/{technician_id}/history", summary="Technician stock event history [Staff]")
+@router.get("/technician/{technician_id}/history", summary="Technician stock event history [Staff or self]")
 async def technician_stock_history(
     technician_id: UUID,
     page: int = Query(1, ge=1),
     per_page: int = Query(30, le=100),
-    current_user: dict = Depends(AnyStaff),
+    current_user: dict = Depends(AnyAuthenticated),
     db: AsyncSession = Depends(get_db)
 ):
+    await _ensure_staff_or_self(technician_id, current_user, db)
     from app.models.inventory import TechnicianStockLog, InventoryItem
     q = (
         select(TechnicianStockLog, InventoryItem)

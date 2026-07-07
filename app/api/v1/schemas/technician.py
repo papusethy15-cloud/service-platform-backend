@@ -46,6 +46,9 @@ class UpdateTechnicianRequest(BaseModel):
     identity_type: Optional[str] = None
     identity_number: Optional[str] = None
     status: Optional[str] = None
+    # When False, technician is skipped by the auto-assign engine entirely
+    # (still assignable manually by admin/CCO). Admin-only toggle.
+    auto_assign_eligible: Optional[bool] = None
 
 
 class AddTechnicianSkillRequest(BaseModel):

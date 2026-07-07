@@ -1,3 +1,5 @@
+import asyncio
+from app.core.background_tasks import track_task
 from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
@@ -6,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, text as sa_text
 from uuid import UUID
 from app.core.database import get_db
-from app.api.deps import AdminCCOTech, AnyAuthenticated
+from app.websocket.manager import publish_event, WSEvent, booking_room, ADMIN_BOOKINGS_ROOM
+from app.api.deps import AdminCCOTech, AnyAuthenticated, AdminOnly
 from app.api.v1.schemas.quotation import (
     AddQuotationPartRequest,
     AddQuotationServiceRequest,
@@ -16,12 +19,14 @@ from app.api.v1.schemas.quotation import (
     QuotationActionRequest,
     UpdateQuotationPartRequest,
     UpdateQuotationRequest,
+    VerifyCustomServiceRequest,
 )
-from app.models.booking import Booking
+from app.models.booking import Booking, BookingStatus
 from app.models.customer import Customer
 from app.models.quotation import (
     PartSource,
     Quotation,
+    QuotationAppliance,
     QuotationPartItem,
     QuotationServiceItem,
     QuotationStatus,
@@ -30,7 +35,9 @@ from app.models.quotation import (
 from app.models.service import Service
 from app.models.technician import Technician
 from app.models.domain import Domain
+from app.models.domain import ServiceCityPrice
 from app.utils.response import success_response
+from app.utils.notify import push_to_technician
 
 router = APIRouter()
 
@@ -178,6 +185,21 @@ def _quotation_summary(quotation: Quotation, booking_number: str | None = None):
     }
 
 
+def _broadcast_quotation(quotation: Quotation, event_type: str, actor_user_id: str | None = None, booking_number: str | None = None):
+    """
+    Fire-and-forget WS broadcast so the admin dashboard and the captain app
+    stay in sync in real time when either side edits a quotation.
+    Broadcasts to the booking room (subscribed by admin's booking modal +
+    the technician's booking-level connection) AND the global admin
+    bookings room (admin list views).
+    """
+    payload = _quotation_summary(quotation, booking_number=booking_number)
+    payload["actor_user_id"] = actor_user_id
+    room = booking_room(str(quotation.booking_id))
+    track_task(publish_event(room, event_type, payload))
+    track_task(publish_event(ADMIN_BOOKINGS_ROOM, event_type, payload))
+
+
 @router.post("", summary="Create quotation")
 async def create_quotation(
     payload: CreateQuotationRequest,
@@ -246,6 +268,7 @@ async def create_quotation(
     await _recalculate_quotation(db, quotation)
     await _add_status_log(db, quotation, current_user["user_id"], "Quotation created")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_CREATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Quotation created successfully")
 
 
@@ -357,10 +380,14 @@ async def get_quotation(
     data["customer_id"] = str(booking.customer_id) if booking and booking.customer_id else None
     data["customer_name"] = customer.name if customer else None
     data["booking_city"] = booking.address_city if booking and hasattr(booking, "address_city") else None
+    data["booking_appliance_brand"] = booking.appliance_brand if booking else None
+    data["booking_appliance_model"] = booking.appliance_model if booking else None
     data["services"] = [
         {
             "id": str(item.id),
-            "service_id": str(item.service_id),
+            "service_id": str(item.service_id) if item.service_id else None,
+            "is_pending_verify": getattr(item, "is_pending_verify", 0) or 0,
+            "custom_service_name": getattr(item, "custom_service_name", None),
             "service_name": item.service_name,
             "quantity": item.quantity,
             "unit_price": item.unit_price,
@@ -397,6 +424,31 @@ async def get_quotation(
             "is_pending_verify": getattr(item, "is_pending_verify", 0) or 0,
         }
     data["parts"] = [_decode_part(item) for item in part_items]
+
+    # Fetch quotation_appliances using raw SQL to avoid ORM column-mapping issues
+    # (e.g. timezone mismatch on created_at between DB and SQLAlchemy model).
+    try:
+        appliance_result = (await db.execute(
+            sa_text(
+                "SELECT id, appliance_id, appliance_label "
+                "FROM quotation_appliances "
+                "WHERE quotation_id = :qid AND is_active = true "
+                "ORDER BY created_at ASC"
+            ),
+            {"qid": str(quotation.id)}
+        )).mappings().all()
+        data["appliances"] = [
+            {
+                "id": str(row["id"]),
+                "appliance_id": str(row["appliance_id"]) if row["appliance_id"] else None,
+                "appliance_label": row["appliance_label"],
+            }
+            for row in appliance_result
+        ]
+    except Exception as _appliance_exc:
+        import logging as _log
+        _log.getLogger(__name__).error("Failed to fetch quotation_appliances for %s: %s", quotation.id, _appliance_exc)
+        data["appliances"] = []
     return success_response(data=data)
 
 
@@ -433,6 +485,7 @@ async def update_quotation(
     await _recalculate_quotation(db, quotation)
     await _add_status_log(db, quotation, current_user["user_id"], "Quotation updated")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Quotation updated successfully")
 
 
@@ -447,6 +500,7 @@ async def delete_quotation(
         raise HTTPException(status_code=400, detail="Approved quotation cannot be deleted")
     quotation.is_active = False
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_DELETED, current_user["user_id"])
     return success_response(message="Quotation deleted successfully")
 
 
@@ -468,12 +522,13 @@ async def revert_quotation_to_draft(
     quotation.approved_by = None
     await _add_status_log(db, quotation, current_user["user_id"], "Reverted to DRAFT for editing")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Quotation reverted to DRAFT")
 
 @router.post("/{quotation_id}/submit", summary="Submit quotation")
 async def submit_quotation(
     quotation_id: UUID,
-    payload: QuotationActionRequest,
+    payload: Optional[QuotationActionRequest] = None,
     current_user: dict = Depends(AdminCCOTech),
     db: AsyncSession = Depends(get_db),
 ):
@@ -482,8 +537,59 @@ async def submit_quotation(
         raise HTTPException(status_code=400, detail="Quotation is not in a submittable state")
     quotation.status = QuotationStatus.SUBMITTED
     quotation.submitted_at = datetime.utcnow()
-    await _add_status_log(db, quotation, current_user["user_id"], payload.notes or "Quotation submitted")
+    notes = (payload.notes if payload and payload.notes else None) or "Quotation submitted"
+    await _add_status_log(db, quotation, current_user["user_id"], notes)
+    # Explicit booking query — async sessions don't support lazy relationship loading
+    _submit_booking = (await db.execute(
+        select(Booking).where(Booking.id == quotation.booking_id)
+    )).scalar_one_or_none()
+    _submit_bnum = _submit_booking.booking_number if _submit_booking else ""
+    _submit_customer_id = _submit_booking.customer_id if _submit_booking else None
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
+    # Also fire dedicated QUOTATION_SUBMITTED event so admin notification system can alert
+    from app.websocket.manager import publish_event as _pub, ADMIN_BOOKINGS_ROOM as _ABR
+    track_task(_pub(_ABR, WSEvent.QUOTATION_SUBMITTED, {
+        "quotation_id": str(quotation.id),
+        "booking_id":   str(quotation.booking_id),
+        "booking_number": _submit_bnum,
+        "submitted_by": current_user.get("name", "Technician"),
+    }))
+    # Bug 4 fix: FCM push to customer so they are notified even with screen closed
+    if _submit_customer_id:
+        try:
+            from app.models.customer import Customer
+            from app.utils.fcm import send_simple_push
+            _cust = (await db.execute(
+                select(Customer).where(Customer.id == _submit_customer_id)
+            )).scalar_one_or_none()
+            if _cust and _cust.user_id:
+                from app.models.user import User
+                from app.models.notification import Notification
+                _cust_user = (await db.execute(
+                    select(User).where(User.id == _cust.user_id)
+                )).scalar_one_or_none()
+                if _cust_user:
+                    # Save notification record
+                    _notif = Notification(
+                        user_id=_cust_user.id,
+                        title="Quotation Ready for Review 📋",
+                        body=f"Your technician has submitted a quotation for booking {_submit_bnum}. Tap to review and approve.",
+                        channel="PUSH",
+                        data={"type": "QUOTATION_SUBMITTED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
+                        is_read=False,
+                    )
+                    db.add(_notif)
+                    await db.commit()
+                    if _cust_user.fcm_token:
+                        track_task(send_simple_push(
+                            fcm_token=_cust_user.fcm_token,
+                            title="Quotation Ready for Review 📋",
+                            body=f"Your technician has submitted a quotation for booking {_submit_bnum}. Tap to review and approve.",
+                            data={"type": "QUOTATION_SUBMITTED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
+                        ))
+        except Exception as _ce:
+            import logging; logging.getLogger(__name__).warning(f"Customer FCM on submit failed: {_ce}")
     return success_response(data=_quotation_summary(quotation), message="Quotation submitted successfully")
 
 
@@ -498,6 +604,15 @@ async def approve_quotation(
     await _ensure_access(db, quotation, current_user)
     if current_user["role"] not in {"SUPER_ADMIN", "ADMIN", "CCO", "CUSTOMER"}:
         raise HTTPException(status_code=403, detail="Access denied")
+    # Quotation must be in SUBMITTED status to be approved.
+    # DRAFT quotations must be submitted first (via /submit) before they can be approved.
+    # ADMIN/CCO/SUPER_ADMIN can also directly approve a DRAFT quotation they created on behalf.
+    approvable_statuses = {QuotationStatus.SUBMITTED, QuotationStatus.DRAFT, QuotationStatus.REJECTED}
+    if quotation.status not in approvable_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot approve quotation in status '{quotation.status.value}'. Only SUBMITTED, DRAFT or REJECTED quotations can be approved."
+        )
     booking = (await db.execute(select(Booking).where(Booking.id == quotation.booking_id))).scalar_one_or_none()
     # A quotation cannot be approved until a technician is assigned to the booking —
     # approval kicks off the repair workflow (inspection/work/invoice), which assumes
@@ -510,12 +625,47 @@ async def approve_quotation(
     quotation.status = QuotationStatus.APPROVED
     quotation.approved_at = datetime.utcnow()
     quotation.approved_by = UUID(current_user["user_id"])
+    _PRE_WORK_STATUSES = {
+        BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED,
+        BookingStatus.ACCEPTED, BookingStatus.TECHNICIAN_ACCEPTED, BookingStatus.EN_ROUTE,
+        BookingStatus.ARRIVED, BookingStatus.INSPECTING, BookingStatus.IN_PROGRESS,
+    }
     if booking:
         booking.base_amount = round(quotation.subtotal_amount - quotation.discount_amount + quotation.adjustment_amount, 2)
         booking.gst_amount = quotation.tax_amount
         booking.total_amount = quotation.total_amount
+        # Bug 7 fix: advance booking status so it's filterable and reflects approval
+        if booking.status in _PRE_WORK_STATUSES:
+            booking.status = BookingStatus.QUOTATION_APPROVED
+            # Write a BookingStatusLog entry so the CCO/admin timeline shows this transition
+            from app.models.booking import BookingStatusLog as _BookingStatusLog
+            db.add(_BookingStatusLog(
+                booking_id=booking.id,
+                status=BookingStatus.QUOTATION_APPROVED,
+                changed_by=UUID(current_user["user_id"]),
+                notes=f"Quotation {quotation.quotation_number} approved — booking ready for repair",
+            ))
     await _add_status_log(db, quotation, current_user["user_id"], payload.notes or "Quotation approved")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
+    # Bug 6 fix: also broadcast a dedicated QUOTATION_APPROVED event so captain app
+    # can show an in-app snackbar/banner even if FCM is delayed.
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_APPROVED, current_user["user_id"])
+    # ── Notify assigned technician ────────────────────────────────────────
+    if booking and booking.technician_id:
+        try:
+            tech = (await db.execute(select(Technician).where(Technician.id == booking.technician_id))).scalar_one_or_none()
+            if tech:
+                bnum = booking.booking_number if booking else str(quotation.booking_id)[:8]
+                await push_to_technician(
+                    db=db, technician=tech,
+                    title="Quotation Approved ✅",
+                    body=f"Admin approved your quotation for booking {bnum}. You can now proceed with the work.",
+                    notif_type="BOOKING",
+                    data={"type": "QUOTATION_APPROVED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
+                )
+        except Exception as _e:
+            import logging; logging.getLogger(__name__).warning(f"Quotation approve notify failed: {_e}")
     return success_response(data=_quotation_summary(quotation), message="Quotation approved successfully")
 
 
@@ -534,6 +684,7 @@ async def reject_quotation(
     quotation.rejection_reason = payload.reason or payload.notes
     await _add_status_log(db, quotation, current_user["user_id"], payload.reason or "Quotation rejected")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Quotation rejected successfully")
 
 
@@ -606,6 +757,7 @@ async def revise_quotation(
     await _add_status_log(db, quotation, current_user["user_id"], "Quotation revised")
     await _add_status_log(db, revised, current_user["user_id"], "New quotation revision created")
     await db.commit()
+    _broadcast_quotation(revised, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(revised), message="Quotation revised successfully")
 
 
@@ -645,7 +797,7 @@ async def quotation_history(
     )
 
 
-@router.post("/{quotation_id}/services", summary="Add service")
+@router.post("/{quotation_id}/services", summary="Add service (existing catalogue or new custom service by technician)")
 async def add_service_to_quotation(
     quotation_id: UUID,
     payload: AddQuotationServiceRequest,
@@ -655,25 +807,221 @@ async def add_service_to_quotation(
     quotation = await _get_quotation_or_404(db, quotation_id)
     if quotation.status not in EDITABLE_STATUSES:
         raise HTTPException(status_code=400, detail="Quotation is not editable")
-    service = (await db.execute(select(Service).where(Service.id == UUID(payload.service_id), Service.is_active == True))).scalar_one_or_none()
-    if not service:
-        raise HTTPException(status_code=404, detail="Service not found")
-    unit_price = payload.unit_price if payload.unit_price is not None else service.base_price
-    # Encode appliance_label into service_name so UI can group by appliance
-    encoded_name = f"{payload.appliance_label} :: {service.name}" if payload.appliance_label else service.name
+
+    # ── PATH A: Existing catalogue service ───────────────────────────────────
+    if payload.service_id:
+        service = (await db.execute(
+            select(Service).where(Service.id == UUID(payload.service_id), Service.is_active == True)
+        )).scalar_one_or_none()
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+        # ── Resolve city-overridden price from booking.city_id ─────────────────
+        booking_for_city = (await db.execute(
+            select(Booking).where(Booking.id == quotation.booking_id)
+        )).scalar_one_or_none()
+        resolved_city_price: float | None = None
+        if booking_for_city and booking_for_city.city_id and payload.unit_price is None:
+            city_price_row = (await db.execute(
+                select(ServiceCityPrice).where(
+                    ServiceCityPrice.service_id == service.id,
+                    ServiceCityPrice.city_id == booking_for_city.city_id,
+                    ServiceCityPrice.is_active == True,
+                )
+            )).scalar_one_or_none()
+            if city_price_row:
+                resolved_city_price = city_price_row.price
+        unit_price = payload.unit_price if payload.unit_price is not None else (resolved_city_price if resolved_city_price is not None else service.base_price)
+        encoded_name = f"{payload.appliance_label} :: {service.name}" if payload.appliance_label else service.name
+        item = QuotationServiceItem(
+            quotation_id=quotation.id,
+            service_id=service.id,
+            service_name=encoded_name,
+            quantity=payload.quantity,
+            unit_price=unit_price,
+            total_price=round(unit_price * payload.quantity, 2),
+            appliance_label=payload.appliance_label,
+            is_pending_verify=0,
+        )
+        db.add(item)
+        await db.flush()
+        await _recalculate_quotation(db, quotation)
+        await db.commit()
+        _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
+        return success_response(
+            data={"id": str(item.id), "total_price": item.total_price, "is_pending_verify": 0},
+            message="Service added successfully"
+        )
+
+    # ── PATH B: Custom / new service suggested by technician ─────────────────
+    custom_name = (payload.custom_service_name or "").strip()
+    if not custom_name:
+        raise HTTPException(status_code=400, detail="Provide service_id for existing service, or custom_service_name for a new service")
+
+    unit_price = payload.custom_base_price or payload.unit_price or 0.0
+
+    # Create a placeholder Service record (inactive until admin verifies)
+    placeholder = Service(
+        # Use a temporary category — admin will reassign during verification.
+        # Find any existing category to satisfy the FK constraint.
+        category_id=(await db.execute(select(Service.category_id).limit(1))).scalar_one_or_none(),
+        name=custom_name,
+        description=f"Suggested by technician (pending admin verification)",
+        base_price=unit_price,
+        gst_percent=18.0,
+        duration_mins=60,
+        is_visible=False,       # not visible to customers yet
+        is_active=False,        # excluded from search results
+        is_pending_verify=1,    # flags this for admin review queue
+        suggested_by_tech=UUID(current_user["user_id"]),
+    )
+    # If no category exists at all, create a fallback one
+    if placeholder.category_id is None:
+        fallback_cat = ServiceCategory(name="General", description="Auto-created", sort_order=99)
+        db.add(fallback_cat)
+        await db.flush()
+        placeholder.category_id = fallback_cat.id
+
+    db.add(placeholder)
+    await db.flush()
+
+    encoded_name = f"{payload.appliance_label} :: {custom_name}" if payload.appliance_label else custom_name
     item = QuotationServiceItem(
         quotation_id=quotation.id,
-        service_id=service.id,
+        service_id=placeholder.id,      # link to placeholder so admin can find it
         service_name=encoded_name,
         quantity=payload.quantity,
         unit_price=unit_price,
         total_price=round(unit_price * payload.quantity, 2),
+        appliance_label=payload.appliance_label,
+        is_pending_verify=1,            # pending admin verify
+        custom_service_name=custom_name,
     )
     db.add(item)
     await db.flush()
     await _recalculate_quotation(db, quotation)
     await db.commit()
-    return success_response(data={"id": str(item.id), "total_price": item.total_price}, message="Service added successfully")
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
+    return success_response(
+        data={"id": str(item.id), "total_price": item.total_price, "is_pending_verify": 1,
+              "service_id": str(placeholder.id)},
+        message=f"Custom service '{custom_name}' added and submitted for admin verification"
+    )
+
+
+@router.post("/{quotation_id}/services/{service_item_id}/verify",
+             summary="Admin: verify and promote a tech-suggested custom service to the catalogue [Admin]")
+async def verify_custom_service(
+    quotation_id: UUID,
+    service_item_id: UUID,
+    payload: VerifyCustomServiceRequest,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin flow for verifying a tech-suggested service:
+    1. Finds the QuotationServiceItem (must have is_pending_verify=1)
+    2. Updates/promotes the placeholder Service to a real catalogue entry
+    3. Optionally sets a commission rule in the technician's commission group
+    4. Marks the quotation item as is_pending_verify=2 (verified)
+    """
+    quotation = await _get_quotation_or_404(db, quotation_id)
+    item = (await db.execute(
+        select(QuotationServiceItem).where(
+            QuotationServiceItem.id == service_item_id,
+            QuotationServiceItem.quotation_id == quotation_id,
+        )
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Service item not found")
+    if item.is_pending_verify != 1:
+        raise HTTPException(status_code=400, detail="This service item is not pending verification")
+
+    # Find the placeholder Service record
+    placeholder = (await db.execute(
+        select(Service).where(Service.id == item.service_id)
+    )).scalar_one_or_none() if item.service_id else None
+
+    # Validate category
+    from app.models.service import ServiceCategory
+    cat = (await db.execute(
+        select(ServiceCategory).where(ServiceCategory.id == UUID(payload.category_id))
+    )).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if placeholder and placeholder.is_pending_verify == 1:
+        # Promote the placeholder to a real service
+        placeholder.name          = payload.name
+        placeholder.category_id   = cat.id
+        placeholder.base_price    = payload.base_price
+        placeholder.gst_percent   = payload.gst_percent
+        placeholder.duration_mins = payload.duration_mins
+        placeholder.is_visible    = payload.is_visible
+        placeholder.is_active     = True          # now live in catalogue
+        placeholder.is_pending_verify = 2         # verified
+        real_service = placeholder
+
+        # Link to domain if provided
+        if payload.domain_id:
+            from app.models.domain import DomainService, DomainCategory
+            from app.api.v1.routes.services import _link_service_to_domain, _link_category_to_domain
+            await _link_service_to_domain(db, real_service.id, UUID(payload.domain_id))
+            await _link_category_to_domain(db, cat.id, UUID(payload.domain_id))
+    else:
+        raise HTTPException(status_code=400, detail="Placeholder service not found or already verified")
+
+    # Mark the quotation item as verified
+    item.is_pending_verify = 2
+    item.service_id = real_service.id
+
+    # Optionally add commission rule to the technician's group
+    if payload.commission_type and payload.commission_value is not None:
+        from app.models.commission import CommissionGroup, CommissionGroupAssignment, CommissionGroupRule
+        from app.models.booking import Booking
+        from app.models.technician import Technician
+
+        booking = (await db.execute(
+            select(Booking).where(Booking.id == quotation.booking_id)
+        )).scalar_one_or_none()
+        if booking and booking.technician_id:
+            # Find this technician's commission group assignment
+            assignment = (await db.execute(
+                select(CommissionGroupAssignment).where(
+                    CommissionGroupAssignment.technician_id == booking.technician_id
+                )
+            )).scalar_one_or_none()
+            if assignment:
+                existing_rule = (await db.execute(
+                    select(CommissionGroupRule).where(
+                        CommissionGroupRule.group_id == assignment.group_id,
+                        CommissionGroupRule.service_id == real_service.id,
+                    )
+                )).scalar_one_or_none()
+                if not existing_rule:
+                    db.add(CommissionGroupRule(
+                        group_id=assignment.group_id,
+                        service_id=real_service.id,
+                        commission_type=payload.commission_type,
+                        rate=payload.commission_value,
+                    ))
+
+    # Store commission override on the item itself as a fallback
+    if payload.commission_type and payload.commission_value is not None:
+        item.tech_commission_override = payload.commission_value
+
+    await db.flush()
+    await _recalculate_quotation(db, quotation)
+    await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
+    return success_response(
+        data={
+            "service_id": str(real_service.id),
+            "service_name": real_service.name,
+            "base_price": real_service.base_price,
+            "is_pending_verify": 2,
+        },
+        message=f"Service '{real_service.name}' verified and added to catalogue"
+    )
 
 
 @router.post("/{quotation_id}/parts", summary="Add spare part")
@@ -789,6 +1137,7 @@ async def add_part_to_quotation(
     await db.flush()
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     msg = "Part added successfully"
     if is_pending_verify == 1:
         msg += " (new part submitted for admin verification)"
@@ -820,6 +1169,7 @@ async def update_part_in_quotation(
         part.total_price = round(part.quantity * part.unit_price, 2)
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(message="Part updated successfully")
 
 
@@ -841,6 +1191,7 @@ async def delete_part_from_quotation(
     part.is_active = False
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(message="Part deleted successfully")
 
 
@@ -869,6 +1220,7 @@ async def apply_coupon_to_quotation(
         quotation.coupon_discount = 0.0
         await _recalculate_quotation(db, quotation)
         await db.commit()
+        _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
         return success_response(data=_quotation_summary(quotation), message="Coupon removed")
 
     # Only allowed on the first quotation for this booking
@@ -936,6 +1288,7 @@ async def apply_coupon_to_quotation(
     quotation.coupon_code = coupon.code
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     disc = quotation.coupon_discount or 0.0
     return success_response(data=_quotation_summary(quotation), message=f"Coupon '{coupon_code_raw}' applied — discount ₹{disc}")
 
@@ -951,6 +1304,7 @@ async def apply_discount(
     await _recalculate_quotation(db, quotation)
     await _add_status_log(db, quotation, current_user["user_id"], payload.notes or "Discount applied")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Discount applied successfully")
 
 
@@ -966,6 +1320,7 @@ async def apply_adjustment(
     await _recalculate_quotation(db, quotation)
     await _add_status_log(db, quotation, current_user["user_id"], payload.notes or "Adjustment applied")
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data=_quotation_summary(quotation), message="Adjustment applied successfully")
 
 
@@ -993,6 +1348,7 @@ async def delete_service_from_quotation(
     item.is_active = False
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(message="Service removed from quotation")
 
 
@@ -1025,6 +1381,7 @@ async def update_service_in_quotation(
     item.total_price = round(item.unit_price * item.quantity, 2)
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(data={"id": str(item.id), "total_price": item.total_price}, message="Service updated")
 
 
@@ -1175,6 +1532,7 @@ async def add_quotation_appliance(
         }
     )
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
 
     return success_response(data={
         "appliance_label": label,
@@ -1244,6 +1602,7 @@ async def mark_repeat_complaint(
     # Recalculate totals (repeat items count as 0 for invoice)
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
 
     return success_response(data={"appliance_label": label, "is_repeat_complaint": payload.is_repeat},
                             message=f"Appliance {'marked' if payload.is_repeat else 'unmarked'} as repeat complaint")
@@ -1293,6 +1652,7 @@ async def remove_quotation_appliance(
 
     await _recalculate_quotation(db, quotation)
     await db.commit()
+    _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
     return success_response(message=f"Appliance '{label}' and all its items removed from quotation")
 
 
@@ -1456,6 +1816,7 @@ async def repair_coupon_counts(
         })
 
     await db.commit()
+    # NOTE: No broadcast here — this is a bulk-repair utility, not a single quotation mutation.
     return success_response(data={
         "coupons_fixed": fixed_coupons,
         "quotations_repaired": repaired_quotations,

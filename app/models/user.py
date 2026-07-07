@@ -20,5 +20,11 @@ class User(BaseModel):
     password_hash = Column(String(255), nullable=True)
     role          = Column(SAEnum(UserRole), nullable=False, default=UserRole.CUSTOMER)
     city          = Column(String(100), nullable=True)
-    profile_image = Column(String(500), nullable=True)
+    profile_image    = Column(String(500), nullable=True)
+    id_proof_url      = Column(String(500), nullable=True)   # Cloudinary URL for ID proof doc
+    id_proof_type     = Column(String(50),  nullable=True)   # e.g. Aadhaar Card, PAN Card
+    address_proof_url = Column(String(500), nullable=True)   # Cloudinary URL for address proof doc
+    address_proof_type= Column(String(50),  nullable=True)   # e.g. Utility Bill, Voter ID
     is_verified   = Column(Boolean, default=False)
+    fcm_token     = Column(String(500), nullable=True)   # Admin/CCO push notification token
+    firebase_uid  = Column(String(128), unique=True, nullable=True)  # Links account to Firebase Auth (Google sign-in)

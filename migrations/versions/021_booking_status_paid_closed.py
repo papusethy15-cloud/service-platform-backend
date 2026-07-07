@@ -7,7 +7,7 @@ Create Date: 2026-06-18
 from alembic import op
 
 revision = '021_booking_status_paid_closed'
-down_revision = '020_quotation_tax_mode'
+down_revision = '020'
 branch_labels = None
 depends_on = None
 

@@ -243,6 +243,72 @@ async def delete_category(
     await db.commit()
     return success_response(message="Category deleted successfully")
 
+
+# ─── 4a. Pending services (tech-suggested, awaiting admin verify) ─────────────
+@router.get("/pending", summary="List tech-suggested services pending admin verification [Admin]")
+async def list_pending_services(
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns all Service records with is_pending_verify=1.
+    Also fetches the QuotationServiceItem that triggered each suggestion
+    so admin sees context (quotation, technician, price, appliance).
+    """
+    from app.models.quotation import QuotationServiceItem, Quotation
+    from app.models.user import User
+
+    pending_svcs = (await db.execute(
+        select(Service).where(Service.is_pending_verify == 1, Service.is_active == False)
+        .order_by(Service.created_at.desc())
+    )).scalars().all()
+
+    result = []
+    for svc in pending_svcs:
+        q_item = (await db.execute(
+            select(QuotationServiceItem).where(
+                QuotationServiceItem.service_id == svc.id,
+                QuotationServiceItem.is_pending_verify == 1,
+            ).order_by(QuotationServiceItem.created_at.desc()).limit(1)
+        )).scalar_one_or_none()
+
+        tech_name = None
+        quotation_id = None
+        booking_id = None
+        if svc.suggested_by_tech:
+            tech_user = (await db.execute(
+                select(User).where(User.id == svc.suggested_by_tech)
+            )).scalar_one_or_none()
+            tech_name = tech_user.full_name if tech_user else None
+        if q_item:
+            quotation_id = str(q_item.quotation_id)
+            from app.models.quotation import Quotation as Quot2
+            quot = (await db.execute(
+                select(Quot2).where(Quot2.id == q_item.quotation_id)
+            )).scalar_one_or_none()
+            if quot:
+                booking_id = str(quot.booking_id)
+
+        result.append({
+            "service_id": str(svc.id),
+            "name": svc.name,
+            "base_price": svc.base_price,
+            "gst_percent": svc.gst_percent,
+            "duration_mins": svc.duration_mins,
+            "description": svc.description,
+            "created_at": svc.created_at.isoformat() if svc.created_at else None,
+            "suggested_by_tech_id": str(svc.suggested_by_tech) if svc.suggested_by_tech else None,
+            "suggested_by_tech_name": tech_name,
+            "quotation_item_id": str(q_item.id) if q_item else None,
+            "quotation_id": quotation_id,
+            "booking_id": booking_id,
+            "appliance_label": q_item.appliance_label if q_item else None,
+            "unit_price": q_item.unit_price if q_item else svc.base_price,
+        })
+
+    return success_response(data={"items": result, "total": len(result)})
+
+
 # ─── 4. Services list / create ────────────────────────────────
 @router.get("", summary="List services — filtered by domain_id and/or category_id [Public]")
 async def list_services(

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Float, Boolean, Integer, ForeignKey, Date, Enum as SAEnum
+from sqlalchemy import DateTime, Column, String, Text, Float, Boolean, Integer, ForeignKey, Date, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 import enum
 from app.models.base import BaseModel
@@ -48,6 +48,19 @@ class Technician(BaseModel):
     # Emergency contact
     emergency_contact_name   = Column(String(150), nullable=True)
     emergency_contact_mobile = Column(String(20), nullable=True)
+
+    # Captain App — real-time fields
+    is_online  = Column(Boolean, default=False, nullable=False)   # set by /technicians/me/status
+    fcm_token  = Column(String(500), nullable=True)               # set on login / app open
+    last_lat      = Column(Float, nullable=True)                  # last known GPS lat
+    last_lng      = Column(Float, nullable=True)                  # last known GPS lng
+    last_seen_at  = Column(DateTime(timezone=True), nullable=True) # last GPS ping timestamp
+
+    # Assignment control
+    # When False, this technician is completely skipped by the AUTO-assign engine
+    # (both initial pick and re-dispatch after reject/timeout/screen-miss) but can
+    # still be assigned manually by admin/CCO. Default True preserves old behaviour.
+    auto_assign_eligible = Column(Boolean, default=True, nullable=False)
 
 
 class TechnicianSkill(BaseModel):

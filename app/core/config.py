@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     JWT_SECRET_KEY: str = "dev-jwt-secret-change-in-production"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15    # Short-lived; clients must use refresh_token to get a new one (rolling 30-day session)
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     OTP_EXPIRE_MINUTES: int = 10

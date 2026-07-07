@@ -13,6 +13,7 @@ from app.models.customer import Customer, CustomerAddress
 from app.models.technician import Technician
 from app.models.tracking import TrackingLocation
 from app.utils.response import success_response
+from app.core.background_tasks import track_task
 
 router = APIRouter()
 
@@ -146,6 +147,27 @@ async def update_location(
     db.add(location)
     await db.flush()
     await db.commit()
+
+    # ── Publish real-time location event via WebSocket ──────────────────────
+    import asyncio as _asyncio
+    try:
+        from app.websocket.manager import publish_event, WSEvent, booking_room
+        _loc_payload = {
+            "technician_id": str(technician.id),
+            "booking_id":    str(booking_id) if booking_id else None,
+            "latitude":      payload.latitude,
+            "longitude":     payload.longitude,
+            "accuracy":      payload.accuracy,
+            "speed":         payload.speed,
+            "heading":       payload.heading,
+            "recorded_at":   (payload.recorded_at or location.recorded_at).isoformat(),
+        }
+        # Broadcast to the specific booking room so the customer tracking page sees it
+        if booking_id:
+            track_task(publish_event(booking_room(str(booking_id)), WSEvent.TECHNICIAN_LOCATION_UPDATE, _loc_payload))
+    except Exception:
+        pass
+
     return success_response(data=_serialize_location(location), message="Location updated successfully")
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, Text, ForeignKey, Enum as SAEnum
+from sqlalchemy import Column, String, Float, Integer, Boolean, Text, ForeignKey, Enum as SAEnum, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 import enum
 from app.models.base import BaseModel
@@ -15,6 +15,7 @@ class AssignmentStatus(str, enum.Enum):
     REJECTED = "REJECTED"
     TIMEOUT = "TIMEOUT"
     REASSIGNED = "REASSIGNED"
+    SCREEN_MISSED = "SCREEN_MISSED"   # FCM delivered but app never sent screen-shown ACK within grace window
 
 
 class AssignmentRule(BaseModel):
@@ -41,3 +42,5 @@ class AssignmentHistory(BaseModel):
     status = Column(SAEnum(AssignmentStatus), nullable=False, default=AssignmentStatus.ASSIGNED)
     score = Column(Float, default=0.0)
     notes = Column(Text, nullable=True)
+    response_deadline = Column(DateTime(timezone=True), nullable=True)   # hard deadline (FCM sent time + timeout)
+    screen_shown_at = Column(DateTime(timezone=True), nullable=True)     # set when technician app sends screen-ACK

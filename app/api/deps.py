@@ -24,9 +24,25 @@ async def get_current_user(
         role: str = payload.get("role")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return {"user_id": user_id, "role": role}
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired or invalid")
+
+    # ── Suspended / terminated user check ─────────────────────────────────────
+    # Verify the account is still active on every request. This means suspending
+    # a user in the admin dashboard immediately blocks all their active sessions —
+    # they cannot make any further API calls even with a valid JWT.
+    from uuid import UUID as _UUID
+    from sqlalchemy import select as _select
+    from app.models.user import User as _User
+    user_row = (await db.execute(_select(_User).where(_User.id == _UUID(user_id)))).scalar_one_or_none()
+    if not user_row:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not user_row.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been suspended. Please contact an administrator.",
+        )
+    return {"user_id": user_id, "role": role}
 
 def require_roles(*roles: str):
     async def checker(current_user: dict = Depends(get_current_user)):
@@ -42,3 +58,4 @@ AdminOrTech     = require_roles("SUPER_ADMIN", "ADMIN", "TECHNICIAN")
 AdminCCOTech    = require_roles("SUPER_ADMIN", "ADMIN", "CCO", "TECHNICIAN")
 AnyStaff        = require_roles("SUPER_ADMIN", "ADMIN", "CCO", "ACCOUNTANT", "INVENTORY_MANAGER")
 AnyAuthenticated = require_roles("SUPER_ADMIN","ADMIN","CCO","TECHNICIAN","CUSTOMER","ACCOUNTANT","INVENTORY_MANAGER")
+TechnicianOnly  = require_roles("TECHNICIAN")

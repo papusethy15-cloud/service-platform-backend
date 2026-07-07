@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,18 +8,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
 from uuid import UUID
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, KeepTogether, HRFlowable,
+)
+from reportlab.lib.utils import ImageReader
 from app.core.database import get_db
 from app.api.deps import AdminCCOTech, AnyAuthenticated
 from app.api.v1.schemas.invoice import CreateInvoiceRequest, InvoiceSendRequest
 from app.models.booking import Booking
 from app.models.user import User
 from app.models.customer import Customer
+from app.models.domain import Domain, DomainProfile
 from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
-from app.models.quotation import Quotation, QuotationStatus
+from app.models.quotation import Quotation, QuotationStatus, QuotationServiceItem, QuotationPartItem
 from app.models.technician import Technician
 from app.utils.response import success_response
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 def generate_invoice_number() -> str:
     return "INV" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[-12:]
@@ -117,26 +130,65 @@ async def create_invoice(
     if existing:
         raise HTTPException(status_code=400, detail="Invoice already exists for this quotation")
 
-    invoice_type = InvoiceType(payload.invoice_type)
+    # ── Invoice type is derived from the quotation's tax_mode.
+    #    Technicians CAN generate invoices for any approved quotation, including
+    #    Non-GST ones (tax_mode = NONE) that admin may have set on the quotation.
+    #    The restriction is only that technicians cannot CREATE Non-GST quotations.
+    role = current_user["role"]
+    q_tax_mode = (getattr(quotation, "tax_mode", "B2C") or "B2C").upper()
+    is_office_role = role in {"SUPER_ADMIN", "ADMIN", "CCO", "ACCOUNTANT"}
+
+    if is_office_role:
+        # Admin/office staff retain full control, including explicit invoice_type override.
+        invoice_type = InvoiceType(payload.invoice_type)
+        business_name = payload.business_name
+        business_address = payload.business_address
+        gstin = payload.gstin
+    else:
+        # Technician: derive invoice type from quotation's tax_mode.
+        # NONE  → NON_GST  (admin changed the quotation to Non-GST; technician generates it)
+        # B2B   → GST_B2B
+        # B2C   → GST_B2C  (default)
+        if q_tax_mode == "NONE":
+            invoice_type = InvoiceType.NON_GST
+        elif q_tax_mode == "B2B":
+            invoice_type = InvoiceType.GST_B2B
+        else:
+            invoice_type = InvoiceType.GST_B2C
+        # Pull business/GST details from the quotation itself (captured when
+        # the quotation type was set) rather than asking the technician again.
+        business_name = payload.business_name or quotation.customer_gst_name
+        business_address = payload.business_address or quotation.customer_gst_address
+        gstin = payload.gstin or quotation.customer_gst_number
+
     taxable_amount = round(quotation.subtotal_amount - quotation.discount_amount + quotation.adjustment_amount, 2)
     total_tax = quotation.tax_amount if invoice_type != InvoiceType.NON_GST else 0.0
     cgst_amount = round(total_tax / 2, 2) if invoice_type != InvoiceType.NON_GST else 0.0
     sgst_amount = round(total_tax / 2, 2) if invoice_type != InvoiceType.NON_GST else 0.0
     igst_amount = 0.0
 
-    if invoice_type == InvoiceType.GST_B2B and not (payload.gstin and payload.business_name and payload.business_address):
+    if invoice_type == InvoiceType.GST_B2B and not (gstin and business_name and business_address):
         raise HTTPException(status_code=400, detail="GST B2B invoices require GSTIN, business name, and business address")
+
+    # Resolve domain_id from the booking so the invoice PDF can load the domain profile
+    _booking_for_domain = (await db.execute(
+        select(Booking).where(Booking.id == quotation.booking_id)
+    )).scalar_one_or_none()
+    _domain_id_for_invoice = (_booking_for_domain.domain_id
+                              if _booking_for_domain and _booking_for_domain.domain_id
+                              else None)
 
     invoice = Invoice(
         invoice_number=generate_invoice_number(),
         booking_id=quotation.booking_id,
+        domain_id=_domain_id_for_invoice,
         quotation_id=quotation.id,
         generated_by=UUID(current_user["user_id"]),
         invoice_type=invoice_type,
         status=InvoiceStatus.GENERATED,
-        business_name=payload.business_name,
-        business_address=payload.business_address,
-        gstin=payload.gstin,
+        business_name=business_name,
+        business_address=business_address,
+        gstin=gstin,
         taxable_amount=taxable_amount,
         cgst_amount=cgst_amount,
         sgst_amount=sgst_amount,
@@ -148,7 +200,7 @@ async def create_invoice(
     db.add(invoice)
 
     quotation.status = QuotationStatus.CONVERTED_TO_INVOICE
-    booking = (await db.execute(select(Booking).where(Booking.id == quotation.booking_id))).scalar_one_or_none()
+    booking = _booking_for_domain  # already fetched above
     if booking:
         booking.base_amount = invoice.taxable_amount
         booking.gst_amount = invoice.cgst_amount + invoice.sgst_amount + invoice.igst_amount
@@ -302,7 +354,584 @@ async def get_invoice(
 ):
     invoice = await _get_invoice_or_404(db, invoice_id)
     await _ensure_access(db, invoice, current_user)
-    return success_response(data=_invoice_summary(invoice))
+
+    # Fetch line items from the linked quotation
+    services = []
+    parts = []
+    services_total = 0.0
+    parts_total = 0.0
+
+    if invoice.quotation_id:
+        service_rows = (await db.execute(
+            select(QuotationServiceItem).where(
+                QuotationServiceItem.quotation_id == invoice.quotation_id,
+                QuotationServiceItem.is_active == True,
+            )
+        )).scalars().all()
+        for s in service_rows:
+            services.append({
+                "service_name": s.service_name,
+                "quantity": s.quantity or 1,
+                "unit_price": round(s.unit_price or 0, 2),
+                "total_price": round(s.total_price or 0, 2),
+                "appliance_label": s.appliance_label,
+            })
+            services_total += s.total_price or 0
+
+        part_rows = (await db.execute(
+            select(QuotationPartItem).where(
+                QuotationPartItem.quotation_id == invoice.quotation_id,
+                QuotationPartItem.is_active == True,
+            )
+        )).scalars().all()
+        for p in part_rows:
+            parts.append({
+                "part_name": p.part_name,
+                "part_source": p.part_source.value if p.part_source else "OFFICE_STOCK",
+                "quantity": p.quantity or 1,
+                "unit_price": round(p.unit_price or 0, 2),
+                "total_price": round(p.total_price or 0, 2),
+                "vendor_name": p.vendor_name,
+                "notes": p.notes,
+            })
+            parts_total += p.total_price or 0
+
+    data = _invoice_summary(invoice)
+    data["services"] = services
+    data["parts"] = parts
+    data["services_total"] = round(services_total, 2)
+    data["parts_total"] = round(parts_total, 2)
+    data["subtotal_amount"] = round(invoice.taxable_amount or 0, 2)
+    data["tax_amount"] = round((invoice.cgst_amount or 0) + (invoice.sgst_amount or 0) + (invoice.igst_amount or 0), 2)
+    data["tax_percent"] = 18  # standard GST; refine if needed
+
+    return success_response(data=data)
+
+
+def _fetch_logo_reader(url: str):
+    """Best-effort remote logo fetch for the PDF header. Returns an ImageReader or None."""
+    if not url:
+        return None
+    try:
+        import requests
+        resp = requests.get(url, timeout=4)
+        if resp.status_code == 200:
+            return ImageReader(BytesIO(resp.content))
+    except Exception:
+        logger.warning("Invoice PDF: could not fetch domain logo from %s", url)
+    return None
+
+
+def _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj=None) -> bytes:
+    """
+    Professional GST Tax Invoice PDF — Bibek Enterprises / Palei Solutions white-label.
+
+    Visual layout (A4, 16 mm margins):
+    +---------------------------------------------------------------------------+
+    |  [LOGO]  |  Business Name (large)                    |  TAX INVOICE       |
+    |          |  Tagline                                  |  INV-XXXXXXXXXXXX  |
+    |          |  Address, City, State - PIN               |  Date: DD Mon YYYY |
+    |          |  Phone  |  Email                          |  [PAID / PENDING]  |
+    |          |  GSTIN  |  PAN                            |                    |
+    +---------------------------------------------------------------------------+
+    |  BILL TO                       |  BOOKING DETAILS                         |
+    |  Customer Name (bold)          |  Booking No  BK-XXXXXXXXX                |
+    |  Phone  |  Email               |  Service     Gas Charging                |
+    |  Address, City - PIN           |  Scheduled   06 Jul 2026                 |
+    |                                |  Invoice Type  GST B2C                   |
+    +---------------------------------------------------------------------------+
+    |  #  | Description         | Type    | Qty |   Rate (INR) | Amount (INR)   |
+    |-----|---------------------|---------|-----|--------------|----------------|
+    |  1  | Gas Charging (AC)   | Service |   1 |       850.00 |        850.00  |
+    |  2  | Refrigerant Gas R22 | Part    |   1 |       650.00 |        650.00  |
+    +---------------------------------------------------------------------------+
+    |                                |  Subtotal        INR  1,500.00           |
+    |  Amount in Words               |  CGST (9%)       INR    157.50           |
+    |  One Thousand Five Hundred...  |  SGST (9%)       INR    157.50           |
+    |                                |  --------------------------------         |
+    |                                |  TOTAL AMOUNT    INR  2,065.00           |
+    |                                |  Balance Due     INR      0.00           |
+    +---------------------------------------------------------------------------+
+    |  PAYMENT DETAILS                                                           |
+    |  Account Name: ...  |  Account No: ...  |  IFSC: ...  |  UPI: ...        |
+    +---------------------------------------------------------------------------+
+    |  Terms & Conditions (3 lines)                                              |
+    +---------------------------------------------------------------------------+
+    |  (c) 2026 Bibek Enterprises  |  Computer-generated invoice, no signature  |
+    +---------------------------------------------------------------------------+
+    """
+    # ── Palette ───────────────────────────────────────────────────────────────
+    NAVY     = colors.HexColor("#1E3A8A")
+    BLUE     = colors.HexColor("#2563EB")
+    BLUE_LT  = colors.HexColor("#DBEAFE")
+    BLUE_XLT = colors.HexColor("#EFF6FF")
+    ORANGE   = colors.HexColor("#EA580C")
+    GREEN    = colors.HexColor("#16A34A")
+    GREY_DK  = colors.HexColor("#111827")
+    GREY_MD  = colors.HexColor("#6B7280")
+    GREY_LT  = colors.HexColor("#F9FAFB")
+    WHITE    = colors.white
+    DIVIDER  = colors.HexColor("#E2E8F0")
+
+    W = 178 * mm   # usable page width
+
+    # ── Style factory ─────────────────────────────────────────────────────────
+    base = getSampleStyleSheet()["Normal"]
+    def S(name, size=9, color=GREY_DK, bold=False, italic=False,
+          align=0, leading=None, sb=0, sa=0):
+        fn = ("Helvetica-BoldOblique" if (bold and italic)
+              else "Helvetica-Bold" if bold
+              else "Helvetica-Oblique" if italic
+              else "Helvetica")
+        return ParagraphStyle(name, parent=base,
+                              fontSize=size, textColor=color, fontName=fn,
+                              alignment=align, leading=leading or round(size * 1.4),
+                              spaceBefore=sb, spaceAfter=sa)
+
+    # Heading styles
+    sH_biz   = S("HBiz",  17, NAVY,    bold=True)
+    sH_tag   = S("HTag",   9, GREY_MD, italic=True)
+    sH_addr  = S("HAddr",  8, GREY_MD)
+    sH_phone = S("HPhone", 8, GREY_MD)
+    sH_gst   = S("HGST",   8, GREY_MD)
+    # Badge
+    sB_title = S("BTit",  11, WHITE,   bold=True,  align=2)
+    sB_num   = S("BNum",   8, colors.HexColor("#BFDBFE"), align=2)
+    sB_date  = S("BDat",   8, colors.HexColor("#93C5FD"), align=2)
+    sB_stat  = S("BStat",  9, WHITE,   bold=True,  align=2)
+    # Section headers
+    sS_lbl   = S("SLbl",   7, GREY_MD, bold=True)
+    sS_val   = S("SVal",   9, GREY_DK, bold=True)
+    sS_sub   = S("SSub",   8, GREY_MD)
+    # Table
+    sTH      = S("TH",     9, WHITE,   bold=True)
+    sTD      = S("TD",     9, GREY_DK)
+    sTDr     = S("TDr",    9, GREY_DK, align=2)
+    sTDbr    = S("TDbr",   9, GREY_DK, bold=True, align=2)
+    # Totals
+    sTLbl    = S("TLbl",   9, GREY_MD)
+    sTVal    = S("TVal",   9, GREY_DK, bold=True, align=2)
+    sTGLbl   = S("TGLbl", 10, NAVY,   bold=True)
+    sTGVal   = S("TGVal", 10, ORANGE, bold=True, align=2)
+    sTBLbl   = S("TBLbl",  9, ORANGE, bold=True)
+    sTBVal   = S("TBVal",  9, ORANGE, bold=True, align=2)
+    sTDLbl   = S("TDLbl",  9, GREEN)
+    sTDVal   = S("TDVal",  9, GREEN,  align=2)
+    sWords   = S("Words",  7, GREY_MD, italic=True, align=2)
+    # Misc
+    sPayH    = S("PayH",   9, NAVY,   bold=True)
+    sPayV    = S("PayV",   9, GREY_DK)
+    sNote    = S("Note",   8, GREY_MD)
+    sFooter  = S("Foot",   8, GREY_MD, align=1)
+    sFooter2 = S("Foot2",  7, colors.HexColor("#9CA3AF"), align=1)
+
+    # ── Collect all business info ─────────────────────────────────────────────
+    dp = domain_profile   # shorthand
+    dom_name = (domain_obj.name if domain_obj else None) if domain_obj else None
+
+    # biz_name is the SERVICE PROVIDER name shown in the invoice header.
+    # invoice.business_name holds the *customer's* B2B GST company name (bill-to),
+    # NOT the provider — so we must NOT use it here.
+    biz_name   = ((dp.business_legal_name if dp else None)
+                  or dom_name
+                  or "Palei Solutions")
+    tagline    = (dp.tagline if dp else None)
+    logo_url   = (dp.logo_url if dp else None)
+    # Provider's GSTIN for the invoice header — from domain profile only.
+    # invoice.gstin is the *customer's* GSTIN (B2B bill-to field), not the provider's.
+    gstin      = (dp.gstin if dp else None)
+    # Customer's B2B GSTIN (shown in Bill To section if B2B invoice)
+    cust_gstin = getattr(invoice, "gstin", None)
+    pan        = (dp.pan_number if dp else None)
+    phone      = (dp.support_phone if dp else None)
+    email      = (dp.support_email if dp else None)
+
+    addr_parts = []
+    if dp and dp.office_address: addr_parts.append(dp.office_address)
+    city_line = ""
+    if dp:
+        city_line = ", ".join(filter(None, [dp.office_city, dp.office_state]))
+        if dp.office_pincode: city_line += f" - {dp.office_pincode}"
+        if dp.office_country and dp.office_country != "India":
+            city_line += f", {dp.office_country}"
+    if city_line: addr_parts.append(city_line)
+
+    copyright_txt = ((dp.copyright_text if dp else None)
+                     or f"(c) {datetime.utcnow().year} {biz_name}. All rights reserved.")
+
+    # ── Document setup ────────────────────────────────────────────────────────
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=14*mm, bottomMargin=14*mm,
+        leftMargin=16*mm, rightMargin=16*mm,
+        title=invoice.invoice_number,
+    )
+    els = []   # element list
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 1. HEADER  (logo | business info | invoice badge)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Logo
+    logo_cell = None
+    logo_reader = _fetch_logo_reader(logo_url)
+    if logo_reader:
+        try:
+            from io import BytesIO as _BIO
+            img_data = logo_reader._fp if hasattr(logo_reader, "_fp") else None
+            # Re-fetch via requests into a fresh BytesIO for Image()
+            import requests as _req
+            r = _req.get(logo_url, timeout=5)
+            if r.status_code == 200:
+                img_buf = _BIO(r.content)
+                logo_img = Image(img_buf, width=28*mm, height=28*mm)
+                logo_cell = logo_img
+        except Exception:
+            logo_cell = None
+
+    if logo_cell is None:
+        # Monogram fallback — navy square with initials
+        initials = "".join(w[0].upper() for w in biz_name.split()[:2])
+        mono_p = Paragraph(f"<b>{initials}</b>",
+                           S("Mono", 16, WHITE, bold=True, align=1))
+        mono_t = Table([[mono_p]], colWidths=[28*mm], rowHeights=[28*mm])
+        mono_t.setStyle(TableStyle([
+            ("BACKGROUND",    (0,0),(-1,-1), NAVY),
+            ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+            ("ALIGN",         (0,0),(-1,-1), "CENTER"),
+            ("ROUNDEDCORNERS",[4]),
+        ]))
+        logo_cell = mono_t
+
+    # Business info column
+    biz_col = [Paragraph(biz_name, sH_biz)]
+    if tagline:
+        biz_col.append(Paragraph(tagline, sH_tag))
+    for a in addr_parts:
+        biz_col.append(Paragraph(a, sH_addr))
+    contact_str = "  |  ".join(filter(None, [phone, email]))
+    if contact_str:
+        biz_col.append(Paragraph(contact_str, sH_phone))
+    gst_str = "  |  ".join(filter(None,
+        [f"GSTIN: {gstin}" if gstin else None,
+         f"PAN: {pan}" if pan else None]))
+    if gst_str:
+        biz_col.append(Paragraph(gst_str, sH_gst))
+
+    # Invoice badge column
+    inv_date = invoice.created_at.strftime("%d %b %Y") if invoice.created_at else "—"
+    status_val = getattr(invoice.status, "value", str(invoice.status)) if invoice.status else "GENERATED"
+    is_paid = status_val in ("PAID", "SETTLED", "CLOSED")
+    status_label = "PAID" if is_paid else "PAYMENT PENDING"
+    status_bg = GREEN if is_paid else ORANGE
+
+    badge_rows = [
+        [Paragraph("TAX INVOICE", sB_title)],
+        [Paragraph(invoice.invoice_number, sB_num)],
+        [Paragraph(f"Date: {inv_date}", sB_date)],
+    ]
+    badge_t = Table(badge_rows, colWidths=[46*mm])
+    badge_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), NAVY),
+        ("TOPPADDING",    (0,0),(-1,-1), 5),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 5),
+        ("LEFTPADDING",   (0,0),(-1,-1), 8),
+        ("RIGHTPADDING",  (0,0),(-1,-1), 8),
+        ("ROUNDEDCORNERS",[4]),
+    ]))
+    # Status pill below badge
+    pill_t = Table([[Paragraph(status_label, S("Pill", 8, WHITE, bold=True, align=1))]],
+                   colWidths=[46*mm], rowHeights=[14])
+    pill_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), status_bg),
+        ("TOPPADDING",    (0,0),(-1,-1), 3),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 3),
+        ("ROUNDEDCORNERS",[3]),
+    ]))
+    badge_col = [badge_t, Spacer(1, 2*mm), pill_t]
+
+    hdr_t = Table([[logo_cell, biz_col, badge_col]],
+                  colWidths=[32*mm, 100*mm, 50*mm])
+    hdr_t.setStyle(TableStyle([
+        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
+        ("RIGHTPADDING", (0,0),(0,0), 10),
+        ("LEFTPADDING",  (2,0),(2,0), 4),
+    ]))
+    els.append(hdr_t)
+    els.append(Spacer(1, 3*mm))
+
+    # Full-width accent rule
+    rule_t = Table([[""]], colWidths=[W], rowHeights=[2])
+    rule_t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1), BLUE)]))
+    els.append(rule_t)
+    els.append(Spacer(1, 5*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 2. BILL TO  /  BOOKING DETAILS
+    # ═══════════════════════════════════════════════════════════════════════════
+    cust_name  = (customer.name   if customer else "Customer")
+    cust_phone = (customer.mobile if customer else None)
+    cust_email = getattr(customer, "email", None) if customer else None
+
+    bill_content = [
+        Paragraph("BILL TO", sS_lbl),
+        Paragraph(cust_name,  sS_val),
+    ]
+    if cust_phone: bill_content.append(Paragraph(cust_phone, sS_sub))
+    if cust_email: bill_content.append(Paragraph(cust_email, sS_sub))
+    if booking:
+        addr = ", ".join(filter(None, [
+            booking.address_line,
+            booking.city,
+            booking.pincode,
+        ]))
+        if addr: bill_content.append(Paragraph(addr, sS_sub))
+    # Show customer's B2B GSTIN if it's a GST B2B invoice
+    if cust_gstin:
+        bill_content.append(Paragraph(f"GSTIN: {cust_gstin}", sS_sub))
+    # Show customer's B2B business name/address if available
+    inv_biz_name = getattr(invoice, "business_name", None)
+    inv_biz_addr = getattr(invoice, "business_address", None)
+    if inv_biz_name:
+        bill_content.append(Paragraph(inv_biz_name, sS_sub))
+    if inv_biz_addr:
+        bill_content.append(Paragraph(inv_biz_addr, sS_sub))
+
+    bk_content = [Paragraph("BOOKING DETAILS", sS_lbl)]
+    if booking:
+        bk_content.append(Paragraph(booking.booking_number, sS_val))
+        if booking.service_name:
+            bk_content.append(Paragraph(f"Service: {booking.service_name}", sS_sub))
+        if booking.scheduled_date:
+            bk_content.append(Paragraph(
+                f"Scheduled: {booking.scheduled_date.strftime('%d %b %Y')}", sS_sub))
+    inv_type_str = (getattr(invoice.invoice_type, "value", "GST_B2C")
+                    .replace("_", " ").title()
+                    if getattr(invoice, "invoice_type", None) else "GST Invoice")
+    bk_content.append(Paragraph(f"Type: {inv_type_str}", sS_sub))
+
+    info_t = Table([[bill_content, bk_content]], colWidths=[W/2, W/2])
+    info_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), BLUE_XLT),
+        ("LEFTPADDING",   (0,0),(-1,-1), 10),
+        ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+        ("TOPPADDING",    (0,0),(-1,-1), 8),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 8),
+        ("VALIGN",        (0,0),(-1,-1), "TOP"),
+        ("LINEAFTER",     (0,0),(0,-1),  0.5, BLUE_LT),
+        ("LINEBELOW",     (0,-1),(-1,-1),1, BLUE),
+        ("ROUNDEDCORNERS",[3]),
+    ]))
+    els.append(info_t)
+    els.append(Spacer(1, 5*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 3. LINE ITEMS TABLE
+    # ═══════════════════════════════════════════════════════════════════════════
+    CW = [10*mm, 76*mm, 20*mm, 14*mm, 28*mm, 28*mm]   # #, Desc, Type, Qty, Rate, Amt
+    rows = [[
+        Paragraph("#",           sTH),
+        Paragraph("Description", sTH),
+        Paragraph("Type",        sTH),
+        Paragraph("Qty",         sTH),
+        Paragraph("Rate (INR)",  sTH),
+        Paragraph("Amt (INR)",   sTH),
+    ]]
+    sn = 1
+    for s in services:
+        desc = s["service_name"]
+        if s.get("appliance_label"):
+            desc += f" ({s['appliance_label']})"
+        rows.append([
+            Paragraph(str(sn), sTDr),
+            Paragraph(desc, sTD),
+            Paragraph("Service", sTD),
+            Paragraph(str(s["quantity"]), sTDr),
+            Paragraph(f"{s['unit_price']:,.2f}", sTDr),
+            Paragraph(f"{s['total_price']:,.2f}", sTDbr),
+        ])
+        sn += 1
+    for p in parts:
+        rows.append([
+            Paragraph(str(sn), sTDr),
+            Paragraph(p["part_name"], sTD),
+            Paragraph("Part", sTD),
+            Paragraph(str(p["quantity"]), sTDr),
+            Paragraph(f"{p['unit_price']:,.2f}", sTDr),
+            Paragraph(f"{p['total_price']:,.2f}", sTDbr),
+        ])
+        sn += 1
+    if not services and not parts:
+        taxable_fb = float(invoice.taxable_amount or 0)
+        rows.append([
+            Paragraph("1", sTDr),
+            Paragraph("Service Charges", sTD),
+            Paragraph("Service", sTD),
+            Paragraph("1", sTDr),
+            Paragraph(f"{taxable_fb:,.2f}", sTDr),
+            Paragraph(f"{taxable_fb:,.2f}", sTDbr),
+        ])
+
+    nr = len(rows)
+    items_t = Table(rows, colWidths=CW, repeatRows=1)
+    items_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,0),  NAVY),
+        ("LINEBELOW",     (0,0),(-1,0),  1.5, BLUE),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1), [WHITE, GREY_LT]),
+        ("LINEBELOW",     (0,1),(-1,-2), 0.3, DIVIDER),
+        ("LINEBELOW",     (0,nr-1),(-1,nr-1), 1.5, NAVY),
+        ("TOPPADDING",    (0,0),(-1,-1), 7),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 7),
+        ("LEFTPADDING",   (0,0),(-1,-1), 6),
+        ("RIGHTPADDING",  (0,0),(-1,-1), 6),
+        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+    ]))
+    els.append(items_t)
+    els.append(Spacer(1, 5*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 4. TOTALS
+    # ═══════════════════════════════════════════════════════════════════════════
+    taxable  = float(invoice.taxable_amount or 0)
+    cgst     = float(getattr(invoice, "cgst_amount",   0) or 0)
+    sgst     = float(getattr(invoice, "sgst_amount",   0) or 0)
+    igst     = float(getattr(invoice, "igst_amount",   0) or 0)
+    total    = float(invoice.total_amount or 0)
+    balance  = float(getattr(invoice, "balance_amount",0) or 0)
+    discount = float(getattr(invoice, "discount_amount",0) or 0)
+    paid_amt = total - balance
+    total_gst= cgst + sgst + igst
+
+    tot_rows = []
+    tot_rows.append([Paragraph("Subtotal",  sTLbl), Paragraph(f"INR {taxable:,.2f}",  sTVal)])
+    if discount > 0:
+        tot_rows.append([Paragraph("Discount",  sTDLbl), Paragraph(f"- INR {discount:,.2f}", sTDVal)])
+    if cgst > 0:
+        tot_rows.append([Paragraph("CGST (9%)", sTLbl), Paragraph(f"INR {cgst:,.2f}",   sTVal)])
+    if sgst > 0:
+        tot_rows.append([Paragraph("SGST (9%)", sTLbl), Paragraph(f"INR {sgst:,.2f}",   sTVal)])
+    if igst > 0:
+        tot_rows.append([Paragraph("IGST",      sTLbl), Paragraph(f"INR {igst:,.2f}",   sTVal)])
+    elif total_gst > 0 and not (cgst or sgst):
+        tot_rows.append([Paragraph("GST",       sTLbl), Paragraph(f"INR {total_gst:,.2f}", sTVal)])
+
+    # Grand total
+    tot_rows.append([Paragraph("TOTAL", sTGLbl), Paragraph(f"INR {total:,.2f}", sTGVal)])
+
+    if paid_amt > 0 and not is_paid:
+        tot_rows.append([Paragraph("Paid",     sTLbl), Paragraph(f"INR {paid_amt:,.2f}", sTVal)])
+    if balance > 0:
+        tot_rows.append([Paragraph("Balance Due", sTBLbl), Paragraph(f"INR {balance:,.2f}", sTBVal)])
+
+    grand_idx = next(i for i,r in enumerate(tot_rows) if r[0].text == "TOTAL")
+    tot_t = Table(tot_rows, colWidths=[42*mm, 38*mm], hAlign="RIGHT")
+    tot_style = [
+        ("LINEBELOW",     (0,0),(-1, grand_idx-1), 0.4, DIVIDER),
+        ("LINEABOVE",     (0, grand_idx),(-1, grand_idx), 1.5, NAVY),
+        ("LINEBELOW",     (0, grand_idx),(-1, grand_idx), 1.5, NAVY),
+        ("BACKGROUND",    (0, grand_idx),(-1, grand_idx), BLUE_XLT),
+        ("TOPPADDING",    (0,0),(-1,-1), 4),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+        ("LEFTPADDING",   (0,0),(-1,-1), 6),
+        ("RIGHTPADDING",  (0,0),(-1,-1), 6),
+        ("ROUNDEDCORNERS",[3]),
+    ]
+    tot_t.setStyle(TableStyle(tot_style))
+
+    # Amount in words
+    try:
+        from num2words import num2words
+        words_str = num2words(int(total), lang="en_IN").title() + " Rupees Only"
+    except Exception:
+        words_str = ""
+
+    left_cell = []
+    if words_str:
+        left_cell.append(Paragraph("Amount in Words:", sS_lbl))
+        left_cell.append(Paragraph(words_str, sWords))
+
+    outer_t = Table([[left_cell, [tot_t, Spacer(1,2*mm),
+                                  Paragraph(words_str, sWords) if words_str else Paragraph("",sNote)]]],
+                    colWidths=[W - 86*mm, 86*mm])
+    outer_t.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP")]))
+
+    # Simpler: just put totals right-aligned with words underneath
+    els.append(Table([[Paragraph("",sNote), tot_t]], colWidths=[W-82*mm, 82*mm],
+                      style=TableStyle([("VALIGN",(0,0),(-1,-1),"TOP")])))
+    if words_str:
+        els.append(Table([[Paragraph("",sNote),
+                           Paragraph(words_str, sWords)]],
+                          colWidths=[W-82*mm, 82*mm]))
+    els.append(Spacer(1, 7*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 5. PAYMENT DETAILS
+    # ═══════════════════════════════════════════════════════════════════════════
+    if dp and (dp.bank_account_number or dp.upi_id):
+        pay_data = []
+        if dp.bank_account_name:   pay_data.append(("Account Name", dp.bank_account_name))
+        if dp.bank_account_number: pay_data.append(("Account No.",  dp.bank_account_number))
+        if dp.bank_ifsc:           pay_data.append(("IFSC",         dp.bank_ifsc))
+        if dp.bank_name:
+            bank = dp.bank_name + (f", {dp.bank_branch}" if dp.bank_branch else "")
+            pay_data.append(("Bank", bank))
+        if dp.upi_id:              pay_data.append(("UPI ID",       dp.upi_id))
+
+        if pay_data:
+            pay_rows = [[Paragraph("PAYMENT DETAILS", sPayH), Paragraph("", sNote)]]
+            for lbl, val in pay_data:
+                pay_rows.append([Paragraph(lbl, sTLbl), Paragraph(val, sPayV)])
+            pay_t = Table(pay_rows, colWidths=[38*mm, W-38*mm])
+            pay_t.setStyle(TableStyle([
+                ("BACKGROUND",    (0,0),(-1,0),  BLUE_XLT),
+                ("SPAN",          (0,0),(-1,0)),
+                ("LINEBELOW",     (0,0),(-1,0),  0.8, BLUE_LT),
+                ("LINEBELOW",     (0,1),(-1,-1), 0.3, DIVIDER),
+                ("TOPPADDING",    (0,0),(-1,-1), 5),
+                ("BOTTOMPADDING", (0,0),(-1,-1), 5),
+                ("LEFTPADDING",   (0,0),(-1,-1), 8),
+                ("RIGHTPADDING",  (0,0),(-1,-1), 8),
+                ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+                ("ROUNDEDCORNERS",[3]),
+            ]))
+            els.append(pay_t)
+            els.append(Spacer(1, 6*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 6. NOTES + TERMS
+    # ═══════════════════════════════════════════════════════════════════════════
+    notes_text = getattr(invoice, "notes", None)
+    terms_block = []
+    if notes_text:
+        terms_block.append(Paragraph(f"Notes: {notes_text}", sNote))
+        terms_block.append(Spacer(1, 2*mm))
+    terms_block.append(Paragraph("Terms & Conditions", sPayH))
+    for t in [
+        "1. This invoice is system-generated and valid without a physical signature.",
+        "2. Goods/services once sold will not be taken back or exchanged.",
+        "3. For disputes or queries, contact us within 7 days of the invoice date.",
+    ]:
+        terms_block.append(Paragraph(t, sNote))
+
+    els.append(KeepTogether(terms_block))
+    els.append(Spacer(1, 7*mm))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 7. FOOTER
+    # ═══════════════════════════════════════════════════════════════════════════
+    foot_rule = Table([[""]], colWidths=[W], rowHeights=[0.8])
+    foot_rule.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1), BLUE_LT)]))
+    els.append(foot_rule)
+    els.append(Spacer(1, 3*mm))
+    els.append(Paragraph(copyright_txt, sFooter))
+    els.append(Paragraph(
+        "This is a computer-generated invoice and does not require a physical signature.",
+        sFooter2,
+    ))
+
+    doc.build(els)
+    buf.seek(0)
+    return buf.read()
 
 
 @router.get("/{invoice_id}/pdf", summary="Download PDF")
@@ -314,25 +943,76 @@ async def get_invoice_pdf(
     invoice = await _get_invoice_or_404(db, invoice_id)
     await _ensure_access(db, invoice, current_user)
 
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer)
-    pdf.setTitle(invoice.invoice_number)
-    pdf.drawString(50, 800, f"Invoice: {invoice.invoice_number}")
-    pdf.drawString(50, 780, f"Type: {invoice.invoice_type.value}")
-    pdf.drawString(50, 760, f"Booking ID: {invoice.booking_id}")
-    pdf.drawString(50, 740, f"Quotation ID: {invoice.quotation_id}")
-    pdf.drawString(50, 720, f"Taxable Amount: INR {invoice.taxable_amount:.2f}")
-    pdf.drawString(50, 700, f"CGST: INR {invoice.cgst_amount:.2f}")
-    pdf.drawString(50, 680, f"SGST: INR {invoice.sgst_amount:.2f}")
-    pdf.drawString(50, 660, f"IGST: INR {invoice.igst_amount:.2f}")
-    pdf.drawString(50, 640, f"Total Amount: INR {invoice.total_amount:.2f}")
-    pdf.drawString(50, 620, f"Balance Amount: INR {invoice.balance_amount:.2f}")
-    pdf.drawString(50, 600, f"Generated On: {invoice.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-    pdf.showPage()
-    pdf.save()
-    buffer.seek(0)
+    booking = (await db.execute(select(Booking).where(Booking.id == invoice.booking_id))).scalar_one_or_none()
+
+    customer = None
+    if booking:
+        customer = (await db.execute(select(Customer).where(Customer.id == booking.customer_id))).scalar_one_or_none()
+
+    domain_profile = None
+    domain_obj = None
+    domain_id = invoice.domain_id or (booking.domain_id if booking else None)
+
+    # If domain_id is not on the invoice (legacy invoices created before the fix),
+    # fall back to looking up the domain by slug from the domain table.
+    if not domain_id:
+        # Try to resolve via the booking's domain_id one more time; if still missing,
+        # load the first/only active domain as a last resort (single-tenant deployment).
+        fallback_domain = (await db.execute(
+            select(Domain).order_by(Domain.sort_order.asc()).limit(1)
+        )).scalar_one_or_none()
+        if fallback_domain:
+            domain_id = fallback_domain.id
+
+    if domain_id:
+        domain_profile = (await db.execute(
+            select(DomainProfile).where(DomainProfile.domain_id == domain_id)
+        )).scalar_one_or_none()
+        domain_obj = (await db.execute(
+            select(Domain).where(Domain.id == domain_id)
+        )).scalar_one_or_none()
+
+    services, parts = [], []
+    if invoice.quotation_id:
+        service_rows = (await db.execute(
+            select(QuotationServiceItem).where(
+                QuotationServiceItem.quotation_id == invoice.quotation_id,
+                QuotationServiceItem.is_active == True,
+            )
+        )).scalars().all()
+        services = [{
+            "service_name": s.service_name, "quantity": s.quantity or 1,
+            "unit_price": round(s.unit_price or 0, 2), "total_price": round(s.total_price or 0, 2),
+            "appliance_label": s.appliance_label,
+        } for s in service_rows]
+
+        part_rows = (await db.execute(
+            select(QuotationPartItem).where(
+                QuotationPartItem.quotation_id == invoice.quotation_id,
+                QuotationPartItem.is_active == True,
+            )
+        )).scalars().all()
+        parts = [{
+            "part_name": p.part_name, "quantity": p.quantity or 1,
+            "unit_price": round(p.unit_price or 0, 2), "total_price": round(p.total_price or 0, 2),
+        } for p in part_rows]
+
+    try:
+        pdf_bytes = _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj)
+    except Exception:
+        logger.exception("Premium invoice PDF generation failed, falling back to plain layout")
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        pdf.setTitle(invoice.invoice_number)
+        pdf.drawString(50, 800, f"Invoice: {invoice.invoice_number}")
+        pdf.drawString(50, 780, f"Total Amount: INR {invoice.total_amount:.2f}")
+        pdf.showPage()
+        pdf.save()
+        buffer.seek(0)
+        pdf_bytes = buffer.read()
+
     return StreamingResponse(
-        buffer,
+        BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={invoice.invoice_number}.pdf"},
     )

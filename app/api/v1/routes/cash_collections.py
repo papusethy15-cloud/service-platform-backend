@@ -22,6 +22,8 @@ from app.models.technician import Technician
 from app.models.customer import Customer
 from app.models.user import User
 from app.utils.response import success_response
+from app.utils.notify import push_to_technician
+from app.core.background_tasks import track_task
 
 router = APIRouter()
 
@@ -239,6 +241,17 @@ async def mark_collected(
     inv   = (await db.execute(select(Invoice).where(Invoice.id == rec.invoice_id))).scalar_one_or_none()
     admin = (await db.execute(select(User).where(User.id == rec.collected_by))).scalar_one_or_none()
 
+    # ── Notify technician ────────────────────────────────────────────────
+    if tech:
+        import asyncio
+        bnum = bk.booking_number if bk else str(rec.booking_id)[:8]
+        track_task(push_to_technician(
+            db=db, technician=tech,
+            title="Cash Collected 💰",
+            body=f"Admin collected ₹{rec.amount:.2f} cash from you for booking {bnum}.",
+            notif_type="PAYMENT",
+            data={"type": "CASH_COLLECTED", "booking_id": str(rec.booking_id), "amount": str(rec.amount)},
+        ))
     return success_response(
         data=_fmt_collection(rec, tech, cust, bk, inv, admin),
         message="Cash collection marked as collected"
@@ -286,6 +299,16 @@ async def collect_all_for_technician(
 
     tech = (await db.execute(select(Technician).where(Technician.id == technician_id))).scalar_one_or_none()
 
+    # ── Notify technician ─────────────────────────────────────────────────
+    if tech:
+        import asyncio
+        track_task(push_to_technician(
+            db=db, technician=tech,
+            title="Cash Collected 💰",
+            body=f"Admin collected all pending cash (₹{total:.2f}, {len(pending)} booking(s)) from you.",
+            notif_type="PAYMENT",
+            data={"type": "CASH_COLLECTED", "total": str(total), "records": str(len(pending))},
+        ))
     return success_response(data={
         "technician_name": tech.name if tech else None,
         "records_collected": len(pending),

@@ -20,6 +20,14 @@ class FollowupRequest(BaseModel):
 class TaskRequest(BaseModel):
     customer_id: Optional[str] = None; title: str; description: Optional[str] = None; due_date: Optional[str] = None; priority: str = "MEDIUM"
 
+class CallLogRequest(BaseModel):
+    customer_id: str
+    booking_id: Optional[str] = None
+    direction: str = "INBOUND"
+    duration_seconds: Optional[int] = None
+    outcome: str
+    summary: str
+
 @router.get("/customers", summary="CRM customer list [Staff]")
 async def crm_customers(
     page: int = Query(1, ge=1), per_page: int = Query(20),
@@ -60,6 +68,21 @@ async def add_note(payload: AddNoteRequest, current_user: dict = Depends(AnyStaf
     db.add(note); await db.commit()
     return success_response(data={"id": str(note.id)}, message="Note added")
 
+@router.get("/notes", summary="List CRM notes for a customer [Staff]")
+async def list_notes(customer_id: str = Query(...), current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):
+    from app.models.crm import CRMNote
+    from app.models.user import User
+    rows = (await db.execute(
+        select(CRMNote, User.name).join(User, User.id == CRMNote.added_by)
+        .where(CRMNote.customer_id == UUID(customer_id), CRMNote.is_active == True)
+        .order_by(CRMNote.created_at.desc())
+    )).all()
+    return success_response(data=[{
+        "id": str(n.id), "customer_id": str(n.customer_id), "added_by": str(n.added_by),
+        "added_by_name": added_by_name, "note": n.note, "note_type": n.note_type,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    } for n, added_by_name in rows])
+
 @router.post("/followup", summary="Create follow-up [Staff]")
 async def create_followup(payload: FollowupRequest, current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):
     from app.models.crm import CRMFollowup
@@ -79,6 +102,18 @@ async def list_followups(page: int = Query(1, ge=1), per_page: int = Query(20),
                                     "subject": f.subject, "due_date": f.due_date.isoformat(),
                                     "status": f.status} for f in items])
 
+@router.patch("/followups/{followup_id}/done", summary="Mark follow-up done [Staff]")
+async def mark_followup_done(followup_id: UUID, current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):
+    from app.models.crm import CRMFollowup
+    fu = (await db.execute(select(CRMFollowup).where(CRMFollowup.id == followup_id))).scalar_one_or_none()
+    if not fu:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    fu.status = "DONE"
+    fu.is_active = False
+    await db.commit()
+    return success_response(message="Follow-up marked done")
+
 @router.post("/task", summary="Create CRM task [Staff]")
 async def create_task(payload: TaskRequest, current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):
     from app.models.crm import CRMTask
@@ -96,6 +131,57 @@ async def list_tasks(page: int = Query(1, ge=1), per_page: int = Query(20),
                               .order_by(CRMTask.created_at.desc()).offset((page-1)*per_page).limit(per_page))).scalars().all()
     return success_response(data=[{"id": str(t.id), "title": t.title, "priority": t.priority,
                                     "status": t.status, "due_date": t.due_date.isoformat() if t.due_date else None} for t in items])
+
+@router.post("/call-logs", summary="Log a customer call [Staff]")
+async def create_call_log(payload: CallLogRequest, current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):
+    from app.models.crm import CallLog
+    log = CallLog(
+        customer_id=UUID(payload.customer_id),
+        cco_id=UUID(current_user["user_id"]),
+        booking_id=UUID(payload.booking_id) if payload.booking_id else None,
+        direction=payload.direction,
+        duration_seconds=payload.duration_seconds,
+        outcome=payload.outcome,
+        summary=payload.summary,
+    )
+    db.add(log)
+    await db.commit()
+    await db.refresh(log)
+    return success_response(data={"id": str(log.id)}, message="Call logged")
+
+@router.get("/call-logs", summary="List call logs — global or by customer [Staff]")
+async def list_call_logs(
+    customer_id: str = Query(None),
+    outcome: str = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(AnyStaff),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.crm import CallLog
+    from app.models.user import User
+    q = (
+        select(CallLog, User.name)
+        .join(User, User.id == CallLog.cco_id)
+        .where(CallLog.is_active == True)
+        .order_by(CallLog.created_at.desc())
+    )
+    if customer_id:
+        q = q.where(CallLog.customer_id == UUID(customer_id))
+    if outcome:
+        q = q.where(CallLog.outcome == outcome)
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    rows = (await db.execute(q.offset((page - 1) * per_page).limit(per_page))).all()
+    return success_response(data={
+        "items": [{
+            "id": str(log.id), "customer_id": str(log.customer_id), "cco_id": str(log.cco_id),
+            "cco_name": cco_name, "booking_id": str(log.booking_id) if log.booking_id else None,
+            "direction": log.direction, "duration_seconds": log.duration_seconds,
+            "outcome": log.outcome, "summary": log.summary,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        } for log, cco_name in rows],
+        "total": total, "page": page, "per_page": per_page,
+    })
 
 @router.get("/segments", summary="Customer segments [Staff]")
 async def customer_segments(current_user: dict = Depends(AnyStaff), db: AsyncSession = Depends(get_db)):

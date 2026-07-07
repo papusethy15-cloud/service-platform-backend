@@ -27,23 +27,23 @@ def upgrade():
         END $$;
     """)
 
-    # 2. Add domain_id column (nullable — NULL = global coupon)
-    op.add_column('coupons',
-        sa.Column('domain_id', UUID(as_uuid=True), sa.ForeignKey('domains.id', ondelete='SET NULL'), nullable=True)
-    )
-    op.create_index('ix_coupons_domain_id', 'coupons', ['domain_id'])
-
-    # 3. New unique constraint: code unique per domain (NULL domain treated as global namespace)
-    #    We use a partial unique index to handle NULLs correctly in Postgres.
+    # 2. Add domain_id column idempotently
     op.execute("""
-        CREATE UNIQUE INDEX uq_coupon_code_domain
+        ALTER TABLE coupons
+            ADD COLUMN IF NOT EXISTS domain_id UUID REFERENCES domains(id) ON DELETE SET NULL
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_coupons_domain_id ON coupons (domain_id)")
+
+    # 3. Unique indexes — idempotent
+    op.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_coupon_code_domain
         ON coupons (code, domain_id)
-        WHERE domain_id IS NOT NULL;
+        WHERE domain_id IS NOT NULL
     """)
     op.execute("""
-        CREATE UNIQUE INDEX uq_coupon_code_global
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_coupon_code_global
         ON coupons (code)
-        WHERE domain_id IS NULL;
+        WHERE domain_id IS NULL
     """)
 
 

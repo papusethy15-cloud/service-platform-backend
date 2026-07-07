@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.models.base import Base
@@ -18,4 +18,4 @@ class AuditLog(Base):
     new_data      = Column(JSONB, nullable=True)
     ip_address    = Column(String(50), nullable=True)
     user_agent    = Column(String(500), nullable=True)
-    created_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

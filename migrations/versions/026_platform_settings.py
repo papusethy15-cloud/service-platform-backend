@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = '026_platform_settings'
-down_revision = '025_coupon_domain_id'
+down_revision = '025'
 branch_labels = None
 depends_on = None
 

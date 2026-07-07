@@ -12,66 +12,207 @@ from app.utils.response import success_response
 router = APIRouter()
 
 class CreateEscalationRequest(BaseModel):
-    booking_id: Optional[str] = None; subject: str; description: str; priority: str = "MEDIUM"
+    booking_id: Optional[str] = None
+    subject: str
+    description: str
+    priority: str = "MEDIUM"
 
 class EscalationActionRequest(BaseModel):
-    escalation_id: str; notes: Optional[str] = None; assigned_to: Optional[str] = None
+    escalation_id: str
+    notes: Optional[str] = None
+    assigned_to: Optional[str] = None
+
+class PatchEscalationRequest(BaseModel):
+    status: Optional[str] = None
+    resolution_notes: Optional[str] = None
+    priority: Optional[str] = None
+    assigned_to: Optional[str] = None
+
+
+def _esc_dict(e) -> dict:
+    """Serialize escalation to a full dict for CCO consumption."""
+    return {
+        "id": str(e.id),
+        "subject": e.subject,
+        "description": e.description,
+        "priority": e.priority,
+        "status": e.status.value,
+        "resolution_notes": e.resolution_notes,
+        "escalation_notes": getattr(e, "escalation_notes", None),
+        "escalation_level": getattr(e, "escalation_level", 1) or 1,
+        "booking_id": str(e.booking_id) if e.booking_id else None,
+        "assigned_to": str(e.assigned_to) if e.assigned_to else None,
+        "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+        "created_at": e.created_at.isoformat(),
+        "updated_at": e.updated_at.isoformat() if hasattr(e, "updated_at") and e.updated_at else None,
+    }
+
 
 @router.post("", summary="Create complaint/escalation")
-async def create_escalation(payload: CreateEscalationRequest, current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
+async def create_escalation(
+    payload: CreateEscalationRequest,
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation, EscalationStatus
-    esc = Escalation(created_by=UUID(current_user["user_id"]), booking_id=UUID(payload.booking_id) if payload.booking_id else None, subject=payload.subject, description=payload.description, priority=payload.priority, status=EscalationStatus.OPEN)
-    db.add(esc); await db.commit()
+    esc = Escalation(
+        created_by=UUID(current_user["user_id"]),
+        booking_id=UUID(payload.booking_id) if payload.booking_id else None,
+        subject=payload.subject,
+        description=payload.description,
+        priority=payload.priority,
+        status=EscalationStatus.OPEN,
+    )
+    db.add(esc)
+    await db.commit()
+    await db.refresh(esc)
     return success_response(data={"id": str(esc.id), "status": esc.status.value}, message="Complaint submitted")
 
+
 @router.get("", summary="List escalations [Admin/CCO]")
-async def list_escalations(page: int = Query(1, ge=1), per_page: int = Query(20), status: str = Query(None), current_user: dict = Depends(AdminOrCCO), db: AsyncSession = Depends(get_db)):
+async def list_escalations(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20),
+    limit: int = Query(None),          # alias used by some callers
+    status: str = Query(None),
+    priority: str = Query(None),
+    search: str = Query(None),
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation, EscalationStatus
+    effective_limit = limit if limit is not None else per_page
     q = select(Escalation).where(Escalation.is_active == True)
-    if status: q = q.where(Escalation.status == EscalationStatus(status))
+    if status:
+        q = q.where(Escalation.status == EscalationStatus(status))
+    if priority:
+        q = q.where(Escalation.priority == priority)
+    if search:
+        q = q.where(Escalation.subject.ilike(f"%{search}%"))
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
-    items = (await db.execute(q.order_by(Escalation.created_at.desc()).offset((page-1)*per_page).limit(per_page))).scalars().all()
-    return success_response(data={"items": [{"id": str(e.id), "subject": e.subject, "priority": e.priority, "status": e.status.value, "created_at": e.created_at.isoformat()} for e in items], "total": total})
+    items = (await db.execute(
+        q.order_by(Escalation.created_at.desc())
+        .offset((page - 1) * effective_limit)
+        .limit(effective_limit)
+    )).scalars().all()
+    return success_response(data={"items": [_esc_dict(e) for e in items], "total": total})
+
+
+@router.get("/history", summary="Escalation history [Admin/CCO]")
+async def escalation_history(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20),
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.escalation import Escalation
+    q = select(Escalation).order_by(Escalation.created_at.desc())
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    items = (await db.execute(q.offset((page - 1) * per_page).limit(per_page))).scalars().all()
+    return success_response(data={"items": [_esc_dict(e) for e in items], "total": total})
+
 
 @router.get("/{escalation_id}", summary="Escalation details")
-async def get_escalation(escalation_id: UUID, current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
+async def get_escalation(
+    escalation_id: UUID,
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation
-    esc = (await db.execute(select(Escalation).where(Escalation.id == escalation_id, Escalation.is_active == True))).scalar_one_or_none()
-    if not esc: raise HTTPException(status_code=404, detail="Escalation not found")
-    return success_response(data={"id": str(esc.id), "subject": esc.subject, "description": esc.description, "priority": esc.priority, "status": esc.status.value, "assigned_to": str(esc.assigned_to) if esc.assigned_to else None, "created_at": esc.created_at.isoformat()})
+    esc = (await db.execute(
+        select(Escalation).where(Escalation.id == escalation_id, Escalation.is_active == True)
+    )).scalar_one_or_none()
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    return success_response(data=_esc_dict(esc))
+
+
+@router.patch("/{escalation_id}", summary="Update escalation status/notes [Admin/CCO]")
+async def patch_escalation(
+    escalation_id: UUID,
+    payload: PatchEscalationRequest,
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.escalation import Escalation, EscalationStatus
+    esc = (await db.execute(
+        select(Escalation).where(Escalation.id == escalation_id)
+    )).scalar_one_or_none()
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+
+    if payload.status:
+        try:
+            new_status = EscalationStatus(payload.status)
+        except ValueError:
+            raise HTTPException(400, f"Invalid status: {payload.status!r}")
+        esc.status = new_status
+        if new_status == EscalationStatus.RESOLVED and not esc.resolved_at:
+            esc.resolved_at = datetime.utcnow()
+            esc.resolved_by = UUID(current_user["user_id"])
+        if new_status == EscalationStatus.ESCALATED:
+            esc.escalation_level = (getattr(esc, "escalation_level", 1) or 1) + 1
+
+    if payload.resolution_notes is not None:
+        esc.resolution_notes = payload.resolution_notes
+
+    if payload.priority is not None:
+        esc.priority = payload.priority
+
+    if payload.assigned_to is not None:
+        esc.assigned_to = UUID(payload.assigned_to) if payload.assigned_to else None
+
+    await db.commit()
+    await db.refresh(esc)
+    return success_response(data=_esc_dict(esc), message="Escalation updated")
+
 
 @router.post("/assign", summary="Assign escalation [Admin/CCO]")
-async def assign_escalation(payload: EscalationActionRequest, current_user: dict = Depends(AdminOrCCO), db: AsyncSession = Depends(get_db)):
+async def assign_escalation(
+    payload: EscalationActionRequest,
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation, EscalationStatus
     esc = (await db.execute(select(Escalation).where(Escalation.id == UUID(payload.escalation_id)))).scalar_one_or_none()
-    if not esc: raise HTTPException(status_code=404, detail="Escalation not found")
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
     esc.assigned_to = UUID(payload.assigned_to) if payload.assigned_to else None
     esc.status = EscalationStatus.IN_PROGRESS
     await db.commit()
     return success_response(message="Escalation assigned")
 
+
 @router.post("/resolve", summary="Resolve escalation [Admin/CCO]")
-async def resolve_escalation(payload: EscalationActionRequest, current_user: dict = Depends(AdminOrCCO), db: AsyncSession = Depends(get_db)):
+async def resolve_escalation(
+    payload: EscalationActionRequest,
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation, EscalationStatus
     esc = (await db.execute(select(Escalation).where(Escalation.id == UUID(payload.escalation_id)))).scalar_one_or_none()
-    if not esc: raise HTTPException(status_code=404, detail="Escalation not found")
-    esc.status = EscalationStatus.RESOLVED; esc.resolved_by = UUID(current_user["user_id"]); esc.resolved_at = datetime.utcnow(); esc.resolution_notes = payload.notes
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    esc.status = EscalationStatus.RESOLVED
+    esc.resolved_by = UUID(current_user["user_id"])
+    esc.resolved_at = datetime.utcnow()
+    esc.resolution_notes = payload.notes
     await db.commit()
     return success_response(message="Escalation resolved")
 
-@router.post("/escalate", summary="Escalate complaint to higher authority [Admin/CCO]")
-async def escalate(payload: EscalationActionRequest, current_user: dict = Depends(AdminOrCCO), db: AsyncSession = Depends(get_db)):
+
+@router.post("/escalate", summary="Escalate to higher authority [Admin/CCO]")
+async def escalate(
+    payload: EscalationActionRequest,
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.escalation import Escalation, EscalationStatus
     esc = (await db.execute(select(Escalation).where(Escalation.id == UUID(payload.escalation_id)))).scalar_one_or_none()
-    if not esc: raise HTTPException(status_code=404, detail="Escalation not found")
-    esc.status = EscalationStatus.ESCALATED; esc.escalation_level = (esc.escalation_level or 1) + 1; esc.escalation_notes = payload.notes
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    esc.status = EscalationStatus.ESCALATED
+    esc.escalation_level = (getattr(esc, "escalation_level", 1) or 1) + 1
+    esc.escalation_notes = payload.notes
     await db.commit()
     return success_response(message="Escalated to higher authority")
-
-@router.get("/history", summary="Escalation history [Admin/CCO]")
-async def escalation_history(page: int = Query(1, ge=1), per_page: int = Query(20), current_user: dict = Depends(AdminOrCCO), db: AsyncSession = Depends(get_db)):
-    from app.models.escalation import Escalation
-    q = select(Escalation).order_by(Escalation.created_at.desc())
-    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
-    items = (await db.execute(q.offset((page-1)*per_page).limit(per_page))).scalars().all()
-    return success_response(data={"items": [{"id": str(e.id), "subject": e.subject, "status": e.status.value, "priority": e.priority, "created_at": e.created_at.isoformat()} for e in items], "total": total})

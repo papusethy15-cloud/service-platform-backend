@@ -42,23 +42,26 @@ async def run_async_migrations():
 def _maybe_stamp_baseline(connection):
     """
     Ensures the VPS alembic_version table is in a state where
-    `alembic upgrade head` will correctly apply migrations 047, 048, and 049.
+    `alembic upgrade head` will correctly apply all pending migrations.
 
-    The VPS DB was bootstrapped before proper Alembic tracking was in place.
-    Over several fix attempts the alembic_version table may contain various
-    combinations of revision IDs — none of which include '049'.
+    IMPORTANT: Do NOT call connection.commit() here.
+    This function runs inside `connection.run_sync(do_run_migrations)` which
+    is inside an asyncpg-managed async connection. Calling .commit() manually
+    ends the implicit transaction prematurely and can cause the subsequent
+    context.begin_transaction() / context.run_migrations() to run in an
+    auto-committed state where DDL is visible but alembic_version updates
+    are lost — exactly the bug that caused 047/048/049/050 to be perpetually
+    skipped on the VPS.
 
-    Strategy: if the DB already has the real schema (users table exists) AND
-    '049' is not yet recorded as applied, clear whatever is in alembic_version
-    and stamp at '046'. This guarantees upgrade() will run 047, 048, and 049
-    and nothing else, regardless of what legacy IDs are currently present.
+    All writes here are part of the same transaction that Alembic commits
+    via context.begin_transaction() in do_run_migrations().
     """
     from sqlalchemy import text
 
-    # FINAL_MIGRATION is the last migration in the hotfix chain.
-    # Once it is stamped, this function becomes a permanent no-op.
-    FINAL_MIGRATION = '051'
-    STAMP_AT        = '050'  # one step before 051 (the definitive column fix)
+    # FINAL_MIGRATION: once this revision is recorded, this function is a no-op forever.
+    # Update this to the latest migration revision whenever a new "fix chain" is added.
+    FINAL_MIGRATION = '053'
+    STAMP_AT        = '052'  # one step before FINAL_MIGRATION
 
     has_version_table = connection.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
@@ -70,7 +73,7 @@ def _maybe_stamp_baseline(connection):
         rows = connection.execute(text("SELECT version_num FROM alembic_version")).fetchall()
         current_versions = {r[0] for r in rows}
 
-    # Already done — nothing to fix
+    # Already done — permanent no-op
     if FINAL_MIGRATION in current_versions:
         return
 
@@ -83,9 +86,9 @@ def _maybe_stamp_baseline(connection):
     if not has_users:
         return
 
-    # DB has real schema but 049 has not been applied yet.
-    # Whatever is currently in alembic_version, replace it with STAMP_AT
-    # so upgrade() will run 047, 048, and 049.
+    # DB has real schema but FINAL_MIGRATION has not been applied.
+    # Replace whatever is in alembic_version with STAMP_AT so upgrade()
+    # will run exactly FINAL_MIGRATION and nothing else.
     print(f"[INFO] env.py: {FINAL_MIGRATION} not yet applied (current={current_versions}) — resetting to {STAMP_AT}")
 
     if not has_version_table:
@@ -98,8 +101,9 @@ def _maybe_stamp_baseline(connection):
         connection.execute(text("DELETE FROM alembic_version"))
 
     connection.execute(text(f"INSERT INTO alembic_version (version_num) VALUES ('{STAMP_AT}')"))
-    connection.commit()
-    print(f"[INFO] env.py: alembic_version reset to {STAMP_AT} — upgrade will now run 051")
+    # NOTE: No connection.commit() here — Alembic's context.begin_transaction()
+    # in do_run_migrations() owns and commits this transaction.
+    print(f"[INFO] env.py: alembic_version reset to {STAMP_AT} — upgrade will now run {FINAL_MIGRATION}")
 
 
 def do_run_migrations(connection):

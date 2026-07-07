@@ -57,8 +57,8 @@ def _maybe_stamp_baseline(connection):
 
     # FINAL_MIGRATION is the last migration in the hotfix chain.
     # Once it is stamped, this function becomes a permanent no-op.
-    FINAL_MIGRATION = '050'
-    STAMP_AT        = '049'  # one step before 050 (the definitive column fix)
+    FINAL_MIGRATION = '051'
+    STAMP_AT        = '050'  # one step before 051 (the definitive column fix)
 
     has_version_table = connection.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
@@ -99,7 +99,7 @@ def _maybe_stamp_baseline(connection):
 
     connection.execute(text(f"INSERT INTO alembic_version (version_num) VALUES ('{STAMP_AT}')"))
     connection.commit()
-    print(f"[INFO] env.py: alembic_version reset to {STAMP_AT} — upgrade will now run 050")
+    print(f"[INFO] env.py: alembic_version reset to {STAMP_AT} — upgrade will now run 051")
 
 
 def do_run_migrations(connection):

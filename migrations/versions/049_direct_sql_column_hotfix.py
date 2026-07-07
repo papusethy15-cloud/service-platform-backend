@@ -1,54 +1,20 @@
 """049_direct_sql_column_hotfix
 
-Emergency direct-SQL fix for VPS where 047+048 were stamped as applied
-but their ALTER TABLE statements never actually ran on the database.
+Emergency re-application of all columns that 047+048 were stamped as
+applied but never actually ran on the VPS DB.
 
-This migration uses raw IF NOT EXISTS guards so it is completely safe
-to run on any DB — it is a no-op if columns already exist.
-
-Columns ensured:
-  technicians:
-    - is_online              BOOLEAN NOT NULL DEFAULT FALSE
-    - fcm_token              VARCHAR(500)
-    - last_lat               DOUBLE PRECISION
-    - last_lng               DOUBLE PRECISION
-    - last_seen_at           TIMESTAMP WITH TIME ZONE
-    - auto_assign_eligible   BOOLEAN NOT NULL DEFAULT TRUE
-    - alternate_mobile       VARCHAR(20)
-    - dob                    DATE
-    - gender                 VARCHAR(10)
-    - pincode                VARCHAR(10)
-    - identity_type          VARCHAR(50)
-    - identity_number        VARCHAR(50)
-    - emergency_contact_name VARCHAR(150)
-    - emergency_contact_mobile VARCHAR(20)
-
-  users:
-    - fcm_token              VARCHAR(500)
-    - firebase_uid           VARCHAR(128)
-    - id_proof_url           VARCHAR(500)
-    - address_proof_url      VARCHAR(500)
-    - id_proof_type          VARCHAR(50)
-    - address_proof_type     VARCHAR(50)
-
-  services:
-    - is_pending_verify      INTEGER NOT NULL DEFAULT 0
-    - suggested_by_tech      UUID
-
-  quotation_service_items:
-    - is_pending_verify          INTEGER NOT NULL DEFAULT 0
-    - custom_service_name        TEXT
-    - tech_commission_override   FLOAT
-
-  payment_transactions:
-    - due_collect_at         TIMESTAMP WITH TIME ZONE
-    - last_reminder_at       TIMESTAMP WITH TIME ZONE
+NOTE: ALTER TYPE ADD VALUE cannot run inside a PostgreSQL transaction.
+      Enum fixes (PAY_LATER, CANCELLED) are handled by the standalone
+      script  scripts/fix_vps_schema.py  which uses AUTOCOMMIT mode.
+      This migration ONLY does column additions (all IF NOT EXISTS).
 
 Revision ID: 049
 Revises: 048
 Create Date: 2026-07-07
 """
 from alembic import op
+import sqlalchemy as sa
+from sqlalchemy import text
 
 revision = '049'
 down_revision = '048'
@@ -56,54 +22,79 @@ branch_labels = None
 depends_on = None
 
 
+def _col_exists(conn, table, column):
+    result = conn.execute(text(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name=:t AND column_name=:c"
+    ), {"t": table, "c": column})
+    return result.fetchone() is not None
+
+
 def upgrade():
-    # ── technicians ──────────────────────────────────────────────────────
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS is_online BOOLEAN NOT NULL DEFAULT FALSE")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(500)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_lng DOUBLE PRECISION")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS auto_assign_eligible BOOLEAN NOT NULL DEFAULT TRUE")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS alternate_mobile VARCHAR(20)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS dob DATE")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS gender VARCHAR(10)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS identity_type VARCHAR(50)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS identity_number VARCHAR(50)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS emergency_contact_name VARCHAR(150)")
-    op.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS emergency_contact_mobile VARCHAR(20)")
+    bind = op.get_bind()
 
-    # ── users ────────────────────────────────────────────────────────────
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token VARCHAR(500)")
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS firebase_uid VARCHAR(128)")
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_proof_url VARCHAR(500)")
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS address_proof_url VARCHAR(500)")
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_proof_type VARCHAR(50)")
-    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS address_proof_type VARCHAR(50)")
-    try:
-        op.create_unique_constraint('uq_users_firebase_uid', 'users', ['firebase_uid'])
-    except Exception:
-        pass
+    columns = [
+        # technicians
+        ("technicians", "is_online",                "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("technicians", "fcm_token",                "VARCHAR(500)"),
+        ("technicians", "last_lat",                 "DOUBLE PRECISION"),
+        ("technicians", "last_lng",                 "DOUBLE PRECISION"),
+        ("technicians", "last_seen_at",             "TIMESTAMP WITH TIME ZONE"),
+        ("technicians", "auto_assign_eligible",     "BOOLEAN NOT NULL DEFAULT TRUE"),
+        ("technicians", "alternate_mobile",         "VARCHAR(20)"),
+        ("technicians", "dob",                      "DATE"),
+        ("technicians", "gender",                   "VARCHAR(10)"),
+        ("technicians", "pincode",                  "VARCHAR(10)"),
+        ("technicians", "identity_type",            "VARCHAR(50)"),
+        ("technicians", "identity_number",          "VARCHAR(50)"),
+        ("technicians", "emergency_contact_name",   "VARCHAR(150)"),
+        ("technicians", "emergency_contact_mobile", "VARCHAR(20)"),
+        # users
+        ("users", "fcm_token",          "VARCHAR(500)"),
+        ("users", "firebase_uid",       "VARCHAR(128)"),
+        ("users", "id_proof_url",       "VARCHAR(500)"),
+        ("users", "address_proof_url",  "VARCHAR(500)"),
+        ("users", "id_proof_type",      "VARCHAR(50)"),
+        ("users", "address_proof_type", "VARCHAR(50)"),
+        # services
+        ("services", "is_pending_verify",  "INTEGER NOT NULL DEFAULT 0"),
+        ("services", "suggested_by_tech",  "UUID"),
+        # quotation_service_items
+        ("quotation_service_items", "is_pending_verify",        "INTEGER NOT NULL DEFAULT 0"),
+        ("quotation_service_items", "custom_service_name",      "TEXT"),
+        ("quotation_service_items", "tech_commission_override",  "DOUBLE PRECISION"),
+        # payment_transactions
+        ("payment_transactions", "due_collect_at",   "TIMESTAMP WITH TIME ZONE"),
+        ("payment_transactions", "last_reminder_at", "TIMESTAMP WITH TIME ZONE"),
+    ]
 
-    # ── services ─────────────────────────────────────────────────────────
-    op.execute("ALTER TABLE services ADD COLUMN IF NOT EXISTS is_pending_verify INTEGER NOT NULL DEFAULT 0")
-    op.execute("ALTER TABLE services ADD COLUMN IF NOT EXISTS suggested_by_tech UUID")
+    for table, col, coltype in columns:
+        if not _col_exists(bind, table, col):
+            bind.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{col}" {coltype}'))
 
-    # ── quotation_service_items ──────────────────────────────────────────
-    op.execute("ALTER TABLE quotation_service_items ADD COLUMN IF NOT EXISTS is_pending_verify INTEGER NOT NULL DEFAULT 0")
-    op.execute("ALTER TABLE quotation_service_items ADD COLUMN IF NOT EXISTS custom_service_name TEXT")
-    op.execute("ALTER TABLE quotation_service_items ADD COLUMN IF NOT EXISTS tech_commission_override FLOAT")
-    try:
-        op.alter_column('quotation_service_items', 'service_id', nullable=True)
-    except Exception:
-        pass
+    # Make service_id nullable on quotation_service_items
+    result = bind.execute(text(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_name='quotation_service_items' AND column_name='service_id'"
+    ))
+    row = result.fetchone()
+    if row and row[0] == 'NO':
+        bind.execute(text(
+            "ALTER TABLE quotation_service_items ALTER COLUMN service_id DROP NOT NULL"
+        ))
 
-    # ── payment_transactions ─────────────────────────────────────────────
-    op.execute("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS due_collect_at TIMESTAMP WITH TIME ZONE")
-    op.execute("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMP WITH TIME ZONE")
-
-    # ── paymentmethod enum ───────────────────────────────────────────────
-    op.execute("ALTER TYPE paymentmethod ADD VALUE IF NOT EXISTS 'PAY_LATER'")
+    # Unique constraint on users.firebase_uid (skip if exists)
+    result = bind.execute(text(
+        "SELECT 1 FROM information_schema.table_constraints "
+        "WHERE constraint_name='uq_users_firebase_uid'"
+    ))
+    if not result.fetchone():
+        try:
+            bind.execute(text(
+                "ALTER TABLE users ADD CONSTRAINT uq_users_firebase_uid UNIQUE (firebase_uid)"
+            ))
+        except Exception:
+            pass
 
 
 def downgrade():
@@ -114,10 +105,6 @@ def downgrade():
     op.execute("ALTER TABLE quotation_service_items DROP COLUMN IF EXISTS is_pending_verify")
     op.execute("ALTER TABLE services DROP COLUMN IF EXISTS suggested_by_tech")
     op.execute("ALTER TABLE services DROP COLUMN IF EXISTS is_pending_verify")
-    try:
-        op.drop_constraint('uq_users_firebase_uid', 'users', type_='unique')
-    except Exception:
-        pass
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS address_proof_type")
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS id_proof_type")
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS address_proof_url")

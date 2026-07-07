@@ -42,7 +42,7 @@ async def run_async_migrations():
 def _maybe_stamp_baseline(connection):
     """
     Ensures the VPS alembic_version table is in a state where
-    `alembic upgrade head` will correctly apply migrations 047, 048 and 049.
+    `alembic upgrade head` will correctly apply migrations 047, 048, and 049.
 
     The VPS DB was bootstrapped before proper Alembic tracking was in place.
     Over several fix attempts the alembic_version table may contain various
@@ -50,15 +50,15 @@ def _maybe_stamp_baseline(connection):
 
     Strategy: if the DB already has the real schema (users table exists) AND
     '049' is not yet recorded as applied, clear whatever is in alembic_version
-    and stamp at '046'. This guarantees upgrade() will run 047, 048 and 049 and
-    nothing else, regardless of what legacy IDs are currently present.
+    and stamp at '046'. This guarantees upgrade() will run 047, 048, and 049
+    and nothing else, regardless of what legacy IDs are currently present.
     """
     from sqlalchemy import text
 
-    # FINAL_MIGRATION is the migration that adds all missing VPS columns.
+    # FINAL_MIGRATION is the last migration in the hotfix chain.
     # Once it is stamped, this function becomes a permanent no-op.
     FINAL_MIGRATION = '049'
-    STAMP_AT        = '046'  # stamp before 047+048+049 so ALL THREE run
+    STAMP_AT        = '046'  # one step before 047 (the first hotfix)
 
     has_version_table = connection.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
@@ -85,8 +85,8 @@ def _maybe_stamp_baseline(connection):
 
     # DB has real schema but 049 has not been applied yet.
     # Whatever is currently in alembic_version, replace it with STAMP_AT
-    # so upgrade() will run 047, 048 and 049.
-    print(f"[INFO] env.py: 049 not yet applied (current={{current_versions}}) — resetting to {{STAMP_AT}}")
+    # so upgrade() will run 047, 048, and 049.
+    print(f"[INFO] env.py: {FINAL_MIGRATION} not yet applied (current={current_versions}) — resetting to {STAMP_AT}")
 
     if not has_version_table:
         connection.execute(text(
@@ -99,7 +99,7 @@ def _maybe_stamp_baseline(connection):
 
     connection.execute(text(f"INSERT INTO alembic_version (version_num) VALUES ('{STAMP_AT}')"))
     connection.commit()
-    print(f"[INFO] env.py: alembic_version reset to {{STAMP_AT}} — upgrade will now run 047+048+049")
+    print(f"[INFO] env.py: alembic_version reset to {STAMP_AT} — upgrade will now run 047+048+049")
 
 
 def do_run_migrations(connection):

@@ -1,14 +1,20 @@
 from logging.config import fileConfig
 import asyncio
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config, create_async_engine
 from alembic import context
 from app.core.config import settings
 from app.models.base import BaseModel
 import app.models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"))
+
+# NOTE: We intentionally do NOT use config.set_main_option() to set the DB URL.
+# The password contains %-encoded characters (e.g. %40, %23) which Python's
+# configparser misinterprets as interpolation syntax and raises ValueError.
+# Instead we build the URL directly and pass it to the engine, bypassing
+# configparser entirely.
+_DB_URL = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -16,17 +22,18 @@ if config.config_file_name is not None:
 target_metadata = BaseModel.metadata
 
 def run_migrations_offline():
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    # Pass URL directly — never through config.get_main_option()
+    context.configure(
+        url=_DB_URL,
+        target_metadata=target_metadata,
+        literal_binds=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
 async def run_async_migrations():
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # Build the engine directly from the URL string, not from configparser section
+    connectable = create_async_engine(_DB_URL, poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

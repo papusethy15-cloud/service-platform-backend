@@ -33,11 +33,20 @@ async def _auto_migrate():
                 return
 
             cfg = Config(ini_path)
-            # Override sqlalchemy.url so Alembic uses sync psycopg2 driver
-            # (Alembic does not support asyncpg directly)
-            from app.core.config import settings
-            sync_url = settings.DATABASE_URL.replace("+asyncpg", "").replace("postgresql+asyncpg", "postgresql")
-            cfg.set_main_option("sqlalchemy.url", sync_url)
+
+            # IMPORTANT: Do NOT use cfg.set_main_option() to set the DB URL.
+            # The password contains %-encoded chars (e.g. %40, %23) which
+            # Python's configparser treats as interpolation syntax and raises:
+            #   ValueError: invalid interpolation syntax in '...' at position N
+            # Instead, patch the env.py lookup by setting the URL as an
+            # attribute on the config object that our env.py reads directly,
+            # then call upgrade. Since our env.py now reads _DB_URL from
+            # settings directly (not from cfg), no override is needed here.
+            # We just need a valid Config object pointing at alembic.ini.
+            #
+            # env.py builds _DB_URL = settings.DATABASE_URL.replace(...) itself,
+            # so alembic_cmd.upgrade(cfg, "head") will work without any URL override.
+            from app.core.config import settings  # noqa — ensure settings loaded
 
             alembic_cmd.upgrade(cfg, "head")
             print("[OK] Auto-migrate: all Alembic migrations applied (head)")

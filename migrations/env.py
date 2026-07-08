@@ -33,8 +33,8 @@ async def _stamp_baseline_async():
     Resets alembic_version to STAMP_AT so Alembic will run FINAL_MIGRATION.
     If FINAL_MIGRATION is already applied, this is a permanent no-op.
     """
-    FINAL_MIGRATION = "055"
-    STAMP_AT        = "054"
+    FINAL_MIGRATION = "056"
+    STAMP_AT        = "055"
 
     engine = create_async_engine(_DB_URL, poolclass=pool.NullPool)
     try:
@@ -117,7 +117,7 @@ async def _force_stamp_final_async(final: str):
 
 
 async def run_async_migrations():
-    FINAL_MIGRATION = "055"
+    FINAL_MIGRATION = "056"
 
     # Step 1: pre-stamp alembic_version in its own committed transaction
     await _stamp_baseline_async()
@@ -136,7 +136,7 @@ async def run_async_migrations():
 
     # Step 3: guarantee alembic_version is stamped even if run_sync aborted.
     # This is the critical loop-breaker: whether DDL succeeded or was a no-op
-    # (IF NOT EXISTS), we stamp 055 so we never re-run this migration.
+    # (IF NOT EXISTS), we stamp 056 so we never re-run this migration.
     await _force_stamp_final_async(FINAL_MIGRATION)
 
 

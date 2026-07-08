@@ -28,6 +28,28 @@ async def _auto_migrate():
             _safe_url = _re.sub(r':([^:@]+)@', ':***@', _s.DATABASE_URL)
             print(f"[INFO] Auto-migrate: connecting to {_safe_url}")
 
+            # ── EARLY EXIT: skip alembic entirely if already at head ──────
+            # This prevents the "Aborted!" in stderr on every restart.
+            # alembic command.upgrade() invokes Click's CLI machinery which
+            # calls sys.exit() on certain conditions → Click prints "Aborted!"
+            # to stderr. We avoid calling it at all if the DB is already at head.
+            # Uses subprocess psql (always available on VPS) for the version check.
+            CURRENT_HEAD = "056"
+            try:
+                import subprocess as _sp
+                _pg_url = _s.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+                _vcheck = _sp.run(
+                    ["psql", _pg_url, "-t", "-A", "-c",
+                     f"SELECT COUNT(*) FROM alembic_version WHERE version_num = '{CURRENT_HEAD}'"],
+                    capture_output=True, text=True, timeout=10
+                )
+                _already_at_head = _vcheck.returncode == 0 and _vcheck.stdout.strip() == "1"
+                if _already_at_head:
+                    print("[OK] Auto-migrate: all Alembic migrations applied (head)")
+                    return
+            except Exception as _ve:
+                print(f"[INFO] Auto-migrate: version check skipped ({_ve}) — running alembic")
+
             # Locate alembic.ini relative to the backend root
             backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             ini_path = os.path.join(backend_dir, "alembic.ini")

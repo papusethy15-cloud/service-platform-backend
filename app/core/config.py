@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     API_V1_PREFIX: str = "/api/v1"
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
+    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:3001", "https://bibekenterprises.com", "https://www.bibekenterprises.com", "https://admin.bibekenterprises.com", "https://api.bibekenterprises.com"]
 
     DATABASE_URL: str = "postgresql://palei_user:palei_pass@localhost:5433/palei_solutions"
     REDIS_URL: str = "redis://localhost:6379/0"

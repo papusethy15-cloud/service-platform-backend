@@ -100,6 +100,9 @@ def booking_room(booking_id: str) -> str:
 def technician_room(technician_id: str) -> str:
     return f"technician:{technician_id}"
 
+def customer_room(user_id: str) -> str:
+    return f"customer:{user_id}"
+
 ADMIN_ASSIGNMENTS_ROOM = "admin:assignments"
 ADMIN_BOOKINGS_ROOM    = "admin:bookings"
 

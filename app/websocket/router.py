@@ -48,6 +48,7 @@ from app.websocket.manager import (
     WSEvent,
     booking_room,
     technician_room,
+    customer_room,
     ADMIN_ASSIGNMENTS_ROOM,
     ADMIN_BOOKINGS_ROOM,
 )
@@ -196,4 +197,31 @@ async def ws_technician(
     rooms = [technician_room(technician_id)]
     await manager.connect(ws, rooms)
     logger.info(f"[WS] Technician {technician_id} connected user={user['user_id']}")
+    await _ws_loop(ws, rooms, user)
+
+
+@router.websocket("/ws/customer/{user_id}")
+async def ws_customer(
+    ws: WebSocket,
+    user_id: str,
+    token: str | None = Query(default=None),
+):
+    """
+    Customer-specific real-time stream.
+    Receives: NOTIFICATION, BOOKING_STATUS_CHANGED, QUOTATION_UPDATED, QUOTATION_CREATED.
+    Requires ?token=<access_token> (same JWT used for HTTP requests).
+    """
+    user = await _validate_ws_token(ws, token)
+    if not user:
+        return
+
+    # Security: a customer can only subscribe to their own room.
+    # Admins/CCO may subscribe to any customer room for support purposes.
+    if user["role"] == "CUSTOMER" and user["user_id"] != user_id:
+        await ws.close(code=4003, reason="Forbidden")
+        return
+
+    rooms = [customer_room(user_id)]
+    await manager.connect(ws, rooms)
+    logger.info(f"[WS] Customer {user_id} connected user={user['user_id']}")
     await _ws_loop(ws, rooms, user)

@@ -170,7 +170,18 @@ async def _save_and_push_customer(
             new_db.add(notif)
             await new_db.commit()
 
-            # 2. FCM push (try customer-row token first, fall back to user-row token)
+            # 2a. WebSocket real-time push to customer room
+            try:
+                from app.websocket.manager import publish_event, customer_room
+                await publish_event(
+                    customer_room(str(user.id)),
+                    "NOTIFICATION",
+                    {"title": title, "body": body, "type": data.get("type", notif_type), **data},
+                )
+            except Exception as _ws_err:
+                logger.debug(f"[notify] Customer WS publish skipped: {_ws_err}")
+
+            # 2b. FCM push (try customer-row token first, fall back to user-row token)
             token = customer.fcm_token or user.fcm_token
             if token:
                 push_data = {**data, "type": data.get("type", notif_type)}

@@ -588,37 +588,43 @@ async def _safe_db_patches():
           transaction. This patch runs OUTSIDE a transaction (COMMIT trick) so
           it always succeeds regardless of migration history.
     """
+    # ALTER TYPE ADD VALUE cannot run inside a transaction in PostgreSQL.
+    # Use AUTOCOMMIT isolation level so every statement commits immediately —
+    # no implicit transaction is ever opened.
     try:
         from sqlalchemy import text
         from app.core.database import engine
-        async with engine.connect() as conn:
-            # Must exit any implicit transaction before ADD VALUE calls
-            await conn.execute(text("COMMIT"))
-
+        async with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             # P1 — paymentstatus CANCELLED
-            await conn.execute(text(
-                "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED'"
-            ))
-            print("[OK] safe_db_patches: paymentstatus.CANCELLED ensured")
+            try:
+                await conn.execute(text(
+                    "ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED'"
+                ))
+                print("[OK] safe_db_patches: paymentstatus.CANCELLED ensured")
+            except Exception as _e1:
+                print(f"[WARN] safe_db_patches P1: {_e1}")
 
-            # P2 — bookingstatus: all values that may be missing on VPS
-            # ALTER TYPE ADD VALUE cannot run in a transaction in PostgreSQL,
-            # so migrations that added these inside begin_transaction() silently
-            # failed. We guarantee them here outside any transaction.
+            # P2 — bookingstatus: guarantee ALL enum values exist on VPS.
+            # Migrations 005/021/035 that used ALTER TYPE ADD VALUE inside
+            # Alembic begin_transaction() failed silently on PostgreSQL (ADD VALUE
+            # is non-transactional). AUTOCOMMIT here ensures each ADD VALUE
+            # commits immediately and never raises a transaction conflict.
             _booking_status_values = [
                 "PENDING_VERIFICATION", "TECHNICIAN_ACCEPTED", "INVOICE_GENERATED",
                 "PAYMENT_PENDING", "WORK_STARTED", "WORK_PAUSED", "REFUND_INITIATED",
                 "PAID", "CLOSED", "SETTLED", "QUOTATION_APPROVED",
                 "CANCELLATION_REQUESTED",
             ]
+            _added = []
             for _val in _booking_status_values:
                 try:
                     await conn.execute(text(
                         f"ALTER TYPE bookingstatus ADD VALUE IF NOT EXISTS '{_val}'"
                     ))
+                    _added.append(_val)
                 except Exception as _ev:
-                    pass  # already exists or other harmless error
-            print("[OK] safe_db_patches: bookingstatus enum values ensured")
+                    pass  # value already exists — fine
+            print(f"[OK] safe_db_patches: bookingstatus enum ensured ({len(_added)} values added/verified)")
     except Exception as e:
         print(f"[WARN] safe_db_patches: {e}")
 

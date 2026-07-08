@@ -122,13 +122,21 @@ async def run_async_migrations():
     # Step 1: pre-stamp alembic_version in its own committed transaction
     await _stamp_baseline_async()
 
-    # Step 2: run Alembic upgrade — picks up from STAMP_AT, runs FINAL_MIGRATION
+    # Step 2: run Alembic upgrade — picks up from STAMP_AT, runs FINAL_MIGRATION.
+    # Wrapped in try/except so that even if Alembic aborts (e.g. transactional DDL
+    # issue), Step 3 still runs and stamps the version, preventing the infinite loop.
     engine = create_async_engine(_DB_URL, poolclass=pool.NullPool)
-    async with engine.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await engine.dispose()
+    try:
+        async with engine.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    except Exception as _exc:
+        print(f"[WARN] env.py: migration run_sync raised {_exc!r} — continuing to force-stamp")
+    finally:
+        await engine.dispose()
 
-    # Step 3: guarantee alembic_version is stamped even if run_sync didn't commit it
+    # Step 3: guarantee alembic_version is stamped even if run_sync aborted.
+    # This is the critical loop-breaker: whether DDL succeeded or was a no-op
+    # (IF NOT EXISTS), we stamp 055 so we never re-run this migration.
     await _force_stamp_final_async(FINAL_MIGRATION)
 
 

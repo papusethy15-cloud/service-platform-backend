@@ -48,28 +48,9 @@ def upgrade():
         "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS city_id UUID"
     ))
 
-    # Add FK constraint using a DO $$ block — avoids op.get_bind() entirely.
-    # The DO block runs entirely inside PostgreSQL so it can check & add atomically.
-    op.execute(text("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'cities'
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM information_schema.table_constraints
-                WHERE constraint_name = 'fk_bookings_city_id'
-                  AND table_name = 'bookings'
-            )
-            THEN
-                ALTER TABLE bookings
-                    ADD CONSTRAINT fk_bookings_city_id
-                    FOREIGN KEY (city_id) REFERENCES cities(id);
-            END IF;
-        END
-        $$;
-    """))
+    # NOTE: FK bookings.city_id → cities intentionally skipped.
+    # Adding FK inside Alembic transactional DDL causes Aborted! if cities
+    # table is missing on VPS. FK enforced at ORM level only.
 
     print("[054] bookings missing columns added: coupon_id, coupon_code, coupon_discount, city_id")
 

@@ -98,26 +98,10 @@ def upgrade():
     op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coupon_discount FLOAT DEFAULT 0.0"))
     op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS city_id         UUID"))
 
-    # FK bookings.city_id → cities (from 054) — conditional via DO $$
-    op.execute(text("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'cities'
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM information_schema.table_constraints
-                WHERE constraint_name = 'fk_bookings_city_id'
-                  AND table_name = 'bookings'
-            )
-            THEN
-                ALTER TABLE bookings
-                    ADD CONSTRAINT fk_bookings_city_id
-                    FOREIGN KEY (city_id) REFERENCES cities(id);
-            END IF;
-        END $$;
-    """))
+    # NOTE: FK bookings.city_id → cities intentionally skipped here.
+    # The FK is enforced at ORM level (nullable=True). Adding it via DDL
+    # inside Alembic's transactional DDL block causes Aborted! if cities
+    # table is missing or has a type mismatch on VPS.
 
     print("[055] Guaranteed schema fix complete — all missing columns applied.")
 

@@ -66,69 +66,112 @@ async def create_technician(
     current_user: dict = Depends(AdminOnly),
     db: AsyncSession = Depends(get_db)
 ):
-    # Create auth user
-    user = User(
-        name=payload.name,
-        mobile=payload.mobile,
-        email=payload.email,
-        role=UserRole.TECHNICIAN,
-        is_verified=True,
-        password_hash=hash_password(payload.mobile),  # default pwd = mobile
-    )
-    db.add(user)
-    await db.flush()
+    from sqlalchemy.exc import IntegrityError
 
-    # Create technician profile
-    tech = Technician(
-        user_id=user.id,
-        name=payload.name,
-        mobile=payload.mobile,
-        email=payload.email,
-        alternate_mobile=payload.alternate_mobile,
-        city=payload.city,
-        area=payload.area,
-        address=payload.address,
-        pincode=payload.pincode,
-        experience_years=payload.experience_years,
-        dob=payload.dob,
-        gender=payload.gender,
-        emergency_contact_name=payload.emergency_contact_name,
-        emergency_contact_mobile=payload.emergency_contact_mobile,
-        identity_type=payload.identity_type,
-        identity_number=payload.identity_number,
-        technician_code=generate_tech_code(),
-    )
-    db.add(tech)
-    await db.flush()
+    # ── Pre-flight: check for duplicate mobile / email in users table ──────────
+    existing_mobile = (await db.execute(
+        select(User).where(User.mobile == payload.mobile)
+    )).scalar_one_or_none()
+    if existing_mobile:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A user with mobile {payload.mobile} already exists. "
+                   "Each technician needs a unique mobile number."
+        )
 
-    # Add skills if provided
-    if payload.skills:
-        for sk in payload.skills:
-            if sk.get("service_id"):
-                skill = TechnicianSkill(
-                    technician_id=tech.id,
-                    service_id=UUID(sk["service_id"]),
-                    proficiency=sk.get("proficiency", "INTERMEDIATE"),
-                )
-                db.add(skill)
-
-    # Add availability if provided
-    if payload.availability:
-        for slot in payload.availability:
-            avail = TechnicianAvailability(
-                technician_id=tech.id,
-                day_of_week=slot.get("day_of_week", 0),
-                start_time=slot.get("start_time", "09:00:00"),
-                end_time=slot.get("end_time", "18:00:00"),
-                is_available=slot.get("is_available", True),
+    if payload.email:
+        existing_email = (await db.execute(
+            select(User).where(User.email == payload.email)
+        )).scalar_one_or_none()
+        if existing_email:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A user with email {payload.email} already exists. "
+                       "Use a different email or leave it blank."
             )
-            db.add(avail)
 
-    await db.commit()
-    return success_response(
-        data={"id": str(tech.id), "technician_code": tech.technician_code},
-        message="Technician registered successfully"
-    )
+    try:
+        # Create auth user
+        user = User(
+            name=payload.name,
+            mobile=payload.mobile,
+            email=payload.email,
+            role=UserRole.TECHNICIAN,
+            is_verified=True,
+            password_hash=hash_password(payload.mobile),  # default pwd = mobile
+        )
+        db.add(user)
+        await db.flush()
+
+        # Create technician profile
+        tech = Technician(
+            user_id=user.id,
+            name=payload.name,
+            mobile=payload.mobile,
+            email=payload.email,
+            alternate_mobile=payload.alternate_mobile,
+            city=payload.city,
+            area=payload.area,
+            address=payload.address,
+            pincode=payload.pincode,
+            experience_years=payload.experience_years,
+            dob=payload.dob,
+            gender=payload.gender,
+            emergency_contact_name=payload.emergency_contact_name,
+            emergency_contact_mobile=payload.emergency_contact_mobile,
+            identity_type=payload.identity_type,
+            identity_number=payload.identity_number,
+            technician_code=generate_tech_code(),
+        )
+        db.add(tech)
+        await db.flush()
+
+        # Add skills if provided
+        if payload.skills:
+            for sk in payload.skills:
+                if sk.get("service_id"):
+                    skill = TechnicianSkill(
+                        technician_id=tech.id,
+                        service_id=UUID(sk["service_id"]),
+                        proficiency=sk.get("proficiency", "INTERMEDIATE"),
+                    )
+                    db.add(skill)
+
+        # Add availability if provided
+        if payload.availability:
+            for slot in payload.availability:
+                avail = TechnicianAvailability(
+                    technician_id=tech.id,
+                    day_of_week=slot.get("day_of_week", 0),
+                    start_time=slot.get("start_time", "09:00:00"),
+                    end_time=slot.get("end_time", "18:00:00"),
+                    is_available=slot.get("is_available", True),
+                )
+                db.add(avail)
+
+        await db.commit()
+        return success_response(
+            data={"id": str(tech.id), "technician_code": tech.technician_code},
+            message="Technician registered successfully"
+        )
+
+    except IntegrityError as exc:
+        await db.rollback()
+        detail = str(exc.orig) if exc.orig else str(exc)
+        if "users_mobile_key" in detail or "mobile" in detail:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Mobile number {payload.mobile} is already registered. "
+                       "Each technician must have a unique mobile number."
+            )
+        if "users_email_key" in detail or "email" in detail:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Email {payload.email} is already registered. "
+                       "Use a different email or leave it blank."
+            )
+        # Re-raise any other integrity errors as 400 (not 500)
+        raise HTTPException(status_code=400, detail=f"Database constraint error: {detail}")
 
 
 # ── GET ────────────────────────────────────────────────────────────────────────

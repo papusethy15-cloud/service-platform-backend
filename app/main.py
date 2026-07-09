@@ -720,7 +720,7 @@ app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)  # WebSocket endpoints (no prefix — uses /ws/... paths)
 
 
-# ── Global 500 handler ────────────────────────────────────────────────────────
+# ── Global exception handlers ─────────────────────────────────────────────────
 # FastAPI's CORSMiddleware only injects Access-Control-Allow-Origin on
 # responses it processes normally.  When an unhandled exception produces a 500,
 # Starlette's ServerErrorMiddleware fires *before* CORS can add its headers,
@@ -732,26 +732,57 @@ app.include_router(ws_router)  # WebSocket endpoints (no prefix — uses /ws/...
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-@app.exception_handler(Exception)
-async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    import logging, traceback
-    logging.getLogger("uvicorn.error").error(
-        "Unhandled exception: %s\n%s", exc, traceback.format_exc()
-    )
+def _cors_headers(request: Request) -> dict:
+    """Return CORS headers for the request's origin if it is in the allowed list."""
     origin = request.headers.get("origin", "")
-    cors_headers: dict = {}
     if origin in settings.ALLOWED_ORIGINS:
-        cors_headers = {
+        return {
             "Access-Control-Allow-Origin":      origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods":     "*",
             "Access-Control-Allow-Headers":     "*",
             "Vary":                             "Origin",
         }
+    return {}
+
+# ── IntegrityError → 400 (duplicate key, FK violation, etc.) ──────────────────
+# Catches sqlalchemy.exc.IntegrityError (wraps asyncpg UniqueViolationError,
+# ForeignKeyViolationError, etc.) globally so every route gets a proper 400
+# with a human-readable message instead of a 500.
+from sqlalchemy.exc import IntegrityError as _SAIntegrityError
+
+@app.exception_handler(_SAIntegrityError)
+async def _integrity_error_handler(request: Request, exc: _SAIntegrityError) -> JSONResponse:
+    import logging
+    logging.getLogger("uvicorn.error").warning("IntegrityError on %s: %s", request.url.path, exc.orig)
+    detail_raw = str(exc.orig) if exc.orig else str(exc)
+    # Produce a friendly message based on the constraint name
+    if "users_mobile_key" in detail_raw or ("mobile" in detail_raw and "unique" in detail_raw.lower()):
+        detail = "This mobile number is already registered. Please use a different mobile number."
+    elif "users_email_key" in detail_raw or ("email" in detail_raw and "unique" in detail_raw.lower()):
+        detail = "This email address is already registered. Please use a different email."
+    elif "unique" in detail_raw.lower() or "duplicate key" in detail_raw.lower():
+        detail = f"A record with these details already exists. {detail_raw}"
+    elif "foreign key" in detail_raw.lower() or "violates foreign key" in detail_raw.lower():
+        detail = "Referenced record does not exist. Please check your input."
+    else:
+        detail = f"Database constraint error: {detail_raw}"
+    return JSONResponse(
+        status_code=400,
+        content={"detail": detail},
+        headers=_cors_headers(request),
+    )
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    import logging, traceback
+    logging.getLogger("uvicorn.error").error(
+        "Unhandled exception: %s\n%s", exc, traceback.format_exc()
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
-        headers=cors_headers,
+        headers=_cors_headers(request),
     )
 
 

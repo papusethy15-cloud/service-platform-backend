@@ -105,8 +105,16 @@ async def update_status(
     db: AsyncSession = Depends(get_db),
 ):
     tech = await _get_technician_for_user(current_user["user_id"], db)
+    was_offline = not tech.is_online
     tech.is_online = payload.is_online
     await db.commit()
+
+    # When a technician comes online, try to assign any pending auto-assign bookings
+    if payload.is_online and was_offline:
+        from app.api.v1.routes.bookings import _sweep_pending_auto_assign
+        from app.core.background_tasks import track_task
+        track_task(_sweep_pending_auto_assign(current_user["user_id"]))
+
     return success_response(
         data={"is_online": tech.is_online},
         message="Status updated"
@@ -168,7 +176,7 @@ async def update_location(
         latitude=payload.lat,
         longitude=payload.lng,
         source="captain_app",
-        recorded_at=datetime.now(timezone.utc),
+        recorded_at=datetime.utcnow(),  # naive UTC — column is TIMESTAMP WITHOUT TIME ZONE
     )
     db.add(location)
     await db.commit()

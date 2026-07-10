@@ -199,7 +199,13 @@ async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered
                 )
             )).scalar_one()
             if online_count == 0:
-                _logger.info(f"Auto-assign skipped — no online technicians for booking {booking_number}")
+                _logger.info(f"Auto-assign: no online technicians — flagging booking {booking_number} for deferred assignment")
+                # Mark the booking so it will be auto-assigned when a technician comes online
+                if booking and not booking.technician_id:
+                    existing_notes = booking.notes or ""
+                    if "[PENDING_AUTO_ASSIGN]" not in existing_notes:
+                        booking.notes = (existing_notes + "\n[PENDING_AUTO_ASSIGN]").strip()
+                    await db.commit()
                 return
 
             # 5. Get rules + pick best online technician
@@ -304,6 +310,91 @@ async def _pick_best_technician_online(db: AsyncSession, booking: "Booking", rul
 
     scored.sort(key=lambda item: (item[0], item[1].rating, -item[2]), reverse=True)
     return scored[0]
+
+
+async def _sweep_pending_auto_assign(triggered_by_user_id: str) -> None:
+    """
+    Called when a technician comes online.
+    Finds all PENDING unassigned bookings flagged with [PENDING_AUTO_ASSIGN]
+    and attempts to assign the newly-online technician (or best available).
+    Runs in its own DB session.
+    """
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+    from app.core.database import AsyncSessionLocal
+    from app.models.system_setting import SystemSetting
+    from app.models.assignment import AssignmentHistory, AssignmentStatus, AssignmentType
+    from app.models.technician import Technician as _Tech, TechnicianStatus
+    from app.api.v1.routes.assignments import (
+        _get_default_rules, _apply_assignment, _timeout_watcher,
+    )
+    from uuid import UUID as _UUID
+
+    async with AsyncSessionLocal() as db:
+        try:
+            # Check auto-assign is still enabled
+            setting_row = (await db.execute(
+                select(SystemSetting).where(
+                    SystemSetting.group == "dispatch",
+                    SystemSetting.key == "auto_assign_enabled",
+                )
+            )).scalar_one_or_none()
+            enabled = (setting_row.value if setting_row else "true").strip().lower()
+            if enabled != "true":
+                return
+
+            # Find PENDING, unassigned bookings flagged for deferred assign
+            pending_bookings = (await db.execute(
+                select(Booking).where(
+                    Booking.status == BookingStatus.PENDING,
+                    Booking.technician_id == None,
+                    Booking.notes.like("%[PENDING_AUTO_ASSIGN]%"),
+                )
+            )).scalars().all()
+
+            if not pending_bookings:
+                return
+
+            _logger.info(f"Auto-assign sweep: {len(pending_bookings)} pending booking(s) to process")
+            rules = await _get_default_rules(db)
+
+            for booking in pending_bookings:
+                try:
+                    score, technician, workload = await _pick_best_technician_online(db, booking, rules)
+                    _logger.info(f"Deferred auto-assign: booking {booking.booking_number} → {technician.name}")
+
+                    # Clear the flag from notes
+                    if booking.notes:
+                        booking.notes = booking.notes.replace("[PENDING_AUTO_ASSIGN]", "").strip() or None
+
+                    await _apply_assignment(
+                        db, booking, technician, AssignmentType.AUTO,
+                        triggered_by_user_id,
+                        "Auto-assigned on technician coming online",
+                        score,
+                        rules.response_timeout_minutes,
+                    )
+
+                    # Start timeout watcher
+                    _created_asgn = (await db.execute(
+                        select(AssignmentHistory).where(
+                            AssignmentHistory.booking_id == booking.id,
+                            AssignmentHistory.technician_id == technician.id,
+                            AssignmentHistory.status == AssignmentStatus.ASSIGNED,
+                        ).order_by(AssignmentHistory.created_at.desc())
+                    )).scalars().first()
+                    if _created_asgn:
+                        track_task(_timeout_watcher(
+                            str(_created_asgn.id),
+                            str(booking.id),
+                            str(technician.id),
+                            rules.response_timeout_minutes,
+                        ))
+                except Exception as _e:
+                    _logger.warning(f"Deferred auto-assign failed for booking {booking.booking_number}: {_e}")
+
+        except Exception as _e:
+            _logger.warning(f"Auto-assign sweep error: {_e}", exc_info=True)
 
 
 # ── CREATE BOOKING ─────────────────────────────────────────────
@@ -1051,6 +1142,9 @@ async def assign_technician(booking_id: UUID, payload: AssignTechnicianRequest, 
     booking = await _get_booking_or_404(db, booking_id)
     booking.technician_id = UUID(payload.technician_id)
     booking.status = BookingStatus.ASSIGNED
+    # Clear any deferred auto-assign flag since we're manually assigning now
+    if booking.notes and "[PENDING_AUTO_ASSIGN]" in booking.notes:
+        booking.notes = booking.notes.replace("[PENDING_AUTO_ASSIGN]", "").strip() or None
     await _add_status_log(db, booking.id, BookingStatus.ASSIGNED, current_user["user_id"], payload.notes or "Technician assigned")
     await db.commit()
     return success_response(message="Technician assigned")

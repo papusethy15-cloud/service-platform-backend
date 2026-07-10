@@ -160,7 +160,7 @@ async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered
     from app.models.assignment import AssignmentHistory, AssignmentStatus, AssignmentType
     from app.models.technician import Technician as _Tech, TechnicianStatus
     from app.api.v1.routes.assignments import (
-        _get_default_rules, _apply_assignment, _timeout_watcher,
+        _get_default_rules, _apply_assignment, _start_watcher,
     )
     from uuid import UUID as _UUID
 
@@ -214,8 +214,8 @@ async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered
 
             _logger.info(f"Auto-assign: booking {booking_number} → technician {technician.name} (score={score:.1f})")
 
-            # 6. Apply assignment (commits, fires WS + FCM)
-            await _apply_assignment(
+            # 6. Apply assignment — returns the AssignmentHistory row; commits + fires WS + FCM
+            new_asgn = await _apply_assignment(
                 db, booking, technician, AssignmentType.AUTO,
                 triggered_by_user_id,
                 "Auto-assigned on booking creation",
@@ -223,21 +223,9 @@ async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered
                 rules.response_timeout_minutes,
             )
 
-            # 7. Start timeout watcher
-            _created_asgn = (await db.execute(
-                select(AssignmentHistory).where(
-                    AssignmentHistory.booking_id == booking.id,
-                    AssignmentHistory.technician_id == technician.id,
-                    AssignmentHistory.status == AssignmentStatus.ASSIGNED,
-                ).order_by(AssignmentHistory.created_at.desc())
-            )).scalars().first()
-            if _created_asgn:
-                track_task(_timeout_watcher(
-                    str(_created_asgn.id),
-                    booking_id_str,
-                    str(technician.id),
-                    rules.response_timeout_minutes,
-                ))
+            # 7. Start two-phase timeout watcher
+            if new_asgn:
+                _start_watcher(new_asgn)
 
         except Exception as _e:
             _logger.warning(f"Auto-assign failed for booking {booking_number}: {_e}", exc_info=True)
@@ -323,12 +311,11 @@ async def _sweep_pending_auto_assign(triggered_by_user_id: str) -> None:
     _logger = _log.getLogger(__name__)
     from app.core.database import AsyncSessionLocal
     from app.models.system_setting import SystemSetting
-    from app.models.assignment import AssignmentHistory, AssignmentStatus, AssignmentType
+    from app.models.assignment import AssignmentType
     from app.models.technician import Technician as _Tech, TechnicianStatus
     from app.api.v1.routes.assignments import (
-        _get_default_rules, _apply_assignment, _timeout_watcher,
+        _get_default_rules, _apply_assignment, _start_watcher,
     )
-    from uuid import UUID as _UUID
 
     async with AsyncSessionLocal() as db:
         try:
@@ -363,11 +350,12 @@ async def _sweep_pending_auto_assign(triggered_by_user_id: str) -> None:
                     score, technician, workload = await _pick_best_technician_online(db, booking, rules)
                     _logger.info(f"Deferred auto-assign: booking {booking.booking_number} → {technician.name}")
 
-                    # Clear the flag from notes
+                    # Clear the flag from notes before commit inside _apply_assignment
                     if booking.notes:
                         booking.notes = booking.notes.replace("[PENDING_AUTO_ASSIGN]", "").strip() or None
 
-                    await _apply_assignment(
+                    # _apply_assignment commits + fires WS + FCM; returns AssignmentHistory
+                    new_asgn = await _apply_assignment(
                         db, booking, technician, AssignmentType.AUTO,
                         triggered_by_user_id,
                         "Auto-assigned on technician coming online",
@@ -375,21 +363,10 @@ async def _sweep_pending_auto_assign(triggered_by_user_id: str) -> None:
                         rules.response_timeout_minutes,
                     )
 
-                    # Start timeout watcher
-                    _created_asgn = (await db.execute(
-                        select(AssignmentHistory).where(
-                            AssignmentHistory.booking_id == booking.id,
-                            AssignmentHistory.technician_id == technician.id,
-                            AssignmentHistory.status == AssignmentStatus.ASSIGNED,
-                        ).order_by(AssignmentHistory.created_at.desc())
-                    )).scalars().first()
-                    if _created_asgn:
-                        track_task(_timeout_watcher(
-                            str(_created_asgn.id),
-                            str(booking.id),
-                            str(technician.id),
-                            rules.response_timeout_minutes,
-                        ))
+                    # Start two-phase timeout watcher
+                    if new_asgn:
+                        _start_watcher(new_asgn)
+
                 except Exception as _e:
                     _logger.warning(f"Deferred auto-assign failed for booking {booking.booking_number}: {_e}")
 

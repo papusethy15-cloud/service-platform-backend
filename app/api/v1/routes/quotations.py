@@ -568,7 +568,9 @@ async def submit_quotation(
         "booking_number": _submit_bnum,
         "submitted_by": current_user.get("name", "Technician"),
     }))
-    # Bug 4 fix: FCM push to customer so they are notified even with screen closed
+    # FCM push to customer so they are notified even with screen closed
+    # NOTE: fcm_token is stored on the Customer model (not User), so we use _cust.fcm_token.
+    #       We still load the User row to get the user_id for the Notification record.
     if _submit_customer_id:
         try:
             from app.models.customer import Customer
@@ -576,31 +578,33 @@ async def submit_quotation(
             _cust = (await db.execute(
                 select(Customer).where(Customer.id == _submit_customer_id)
             )).scalar_one_or_none()
-            if _cust and _cust.user_id:
-                from app.models.user import User
+            if _cust:
                 from app.models.notification import Notification
-                _cust_user = (await db.execute(
-                    select(User).where(User.id == _cust.user_id)
-                )).scalar_one_or_none()
-                if _cust_user:
-                    # Save notification record
-                    _notif = Notification(
-                        user_id=_cust_user.id,
-                        title="Quotation Ready for Review 📋",
-                        body=f"Your technician has submitted a quotation for booking {_submit_bnum}. Tap to review and approve.",
-                        channel="PUSH",
-                        data={"type": "QUOTATION_SUBMITTED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
-                        is_read=False,
-                    )
-                    db.add(_notif)
-                    await db.commit()
-                    if _cust_user.fcm_token:
-                        track_task(send_simple_push(
-                            fcm_token=_cust_user.fcm_token,
+                # Save in-app notification record (requires user_id)
+                if _cust.user_id:
+                    from app.models.user import User
+                    _cust_user = (await db.execute(
+                        select(User).where(User.id == _cust.user_id)
+                    )).scalar_one_or_none()
+                    if _cust_user:
+                        _notif = Notification(
+                            user_id=_cust_user.id,
                             title="Quotation Ready for Review 📋",
                             body=f"Your technician has submitted a quotation for booking {_submit_bnum}. Tap to review and approve.",
+                            channel="PUSH",
                             data={"type": "QUOTATION_SUBMITTED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
-                        ))
+                            is_read=False,
+                        )
+                        db.add(_notif)
+                        await db.commit()
+                # FCM push — token is on Customer model, not User
+                if _cust.fcm_token:
+                    track_task(send_simple_push(
+                        fcm_token=_cust.fcm_token,
+                        title="Quotation Ready for Review 📋",
+                        body=f"Your technician has submitted a quotation for booking {_submit_bnum}. Tap to review and approve.",
+                        data={"type": "QUOTATION_SUBMITTED", "booking_id": str(quotation.booking_id), "quotation_id": str(quotation.id)},
+                    ))
         except Exception as _ce:
             import logging; logging.getLogger(__name__).warning(f"Customer FCM on submit failed: {_ce}")
     return success_response(data=_quotation_summary(quotation), message="Quotation submitted successfully")
@@ -1952,6 +1956,9 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     domain_name = domain_profile.get("business_name") if domain_profile else "Bibek Enterprises"
     domain_address = domain_profile.get("address", "") if domain_profile else ""
     domain_gstin = domain_profile.get("gstin", "") if domain_profile else ""
+    domain_phone = domain_profile.get("support_phone", "") if domain_profile else ""
+    domain_email = domain_profile.get("support_email", "") if domain_profile else ""
+    domain_logo_url = domain_profile.get("logo_url", "") if domain_profile else ""
 
     cust_name = f"{customer.first_name or ''} {customer.last_name or ''}".strip() or "Customer"
     cust_mobile = customer.mobile_number or ""
@@ -1971,24 +1978,72 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
 
     story = []
 
-    # Header row
-    header_data = [
-        [
-            Paragraph(domain_name or "Bibek Enterprises", h1),
-            Paragraph(f"QUOTATION<br/><font size=9 color='#6B7280'>{quotation.quotation_number}</font>", ParagraphStyle("qno", fontSize=18, fontName="Helvetica-Bold", textColor=orange_color, alignment=TA_RIGHT, leading=22)),
-        ]
-    ]
-    header_table = Table(header_data, colWidths=["60%", "40%"])
+    # ── Header: logo (if available) + company name / QUOTATION label ──────
+    # Try to fetch the logo and embed it; fall back to text-only if unavailable.
+    logo_image = None
+    if domain_logo_url:
+        try:
+            import urllib.request as _urlreq
+            import tempfile as _tmp
+            import os as _os
+            from reportlab.platypus import Image as RLImage
+            with _urlreq.urlopen(domain_logo_url, timeout=4) as _resp:
+                _logo_data = _resp.read()
+            _suffix = ".png" if "png" in domain_logo_url.lower() else ".jpg"
+            _tmp_file = _tmp.NamedTemporaryFile(delete=False, suffix=_suffix)
+            _tmp_file.write(_logo_data)
+            _tmp_file.close()
+            logo_image = RLImage(_tmp_file.name, width=36 * mm, height=18 * mm, kind="proportional")
+        except Exception:
+            logo_image = None
+
+    # Build company info block (name + address + contact)
+    company_lines = [f"<b>{domain_name or 'Bibek Enterprises'}</b>"]
+    if domain_address:
+        company_lines.append(domain_address)
+    contact_parts = []
+    if domain_phone:
+        contact_parts.append(f"📞 {domain_phone}")
+    if domain_email:
+        contact_parts.append(f"✉ {domain_email}")
+    if contact_parts:
+        company_lines.append("  |  ".join(contact_parts))
+    if domain_gstin:
+        company_lines.append(f"GSTIN: {domain_gstin}")
+
+    company_para = Paragraph("<br/>".join(company_lines), ParagraphStyle(
+        "company", fontSize=9, fontName="Helvetica", textColor=ink_dark, leading=14,
+    ))
+    company_name_para = Paragraph(domain_name or "Bibek Enterprises", h1)
+
+    quotation_label_para = Paragraph(
+        f"QUOTATION<br/><font size=9 color='#6B7280'>{quotation.quotation_number}</font>",
+        ParagraphStyle("qno", fontSize=18, fontName="Helvetica-Bold", textColor=orange_color, alignment=TA_RIGHT, leading=22),
+    )
+
+    if logo_image:
+        header_data = [[logo_image, company_para, quotation_label_para]]
+        header_table = Table(header_data, colWidths=["20%", "50%", "30%"])
+    else:
+        header_data = [[company_name_para, quotation_label_para]]
+        header_table = Table(header_data, colWidths=["60%", "40%"])
+
     header_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(header_table)
 
-    if domain_address:
-        story.append(Paragraph(domain_address, small))
-    if domain_gstin:
-        story.append(Paragraph(f"GSTIN: {domain_gstin}", small))
+    # Sub-header: address/contact lines if no logo (logo layout already includes them)
+    if not logo_image:
+        if domain_address:
+            story.append(Paragraph(domain_address, small))
+        contact_str = "  |  ".join(filter(None, [domain_phone, domain_email]))
+        if contact_str:
+            story.append(Paragraph(contact_str, small))
+        if domain_gstin:
+            story.append(Paragraph(f"GSTIN: {domain_gstin}", small))
+
     story.append(HRFlowable(width="100%", thickness=1, color=rl_colors.HexColor("#E5E7EB"), spaceAfter=8))
 
     # Info row
@@ -2001,10 +2056,39 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     except Exception:
         created_str = str(quotation.created_at or "")
 
+    # Build address line for "Bill To"
+    _addr_str = ""
+    try:
+        if booking and hasattr(booking, "address") and booking.address:
+            _addr_str = str(booking.address)
+    except Exception:
+        pass
+
+    # Scheduled date for booking info cell
+    _sched_str = ""
+    try:
+        if booking and hasattr(booking, "scheduled_date") and booking.scheduled_date:
+            import datetime as _dt2
+            _sdt = booking.scheduled_date
+            if hasattr(_sdt, "strftime"):
+                _sched_str = _sdt.strftime("%-d %b %Y")
+            else:
+                _sched_str = str(_sdt)[:10]
+    except Exception:
+        pass
+
+    bill_to_lines = [f"<b>Bill To</b>", cust_name, cust_mobile]
+    if _addr_str:
+        bill_to_lines.append(_addr_str[:80])  # truncate very long addresses
+
+    booking_lines = [f"<b>Booking No.</b>", f"#{booking_no}", service_name]
+    if _sched_str:
+        booking_lines.append(f"Scheduled: {_sched_str}")
+
     info_data = [
         [
-            Paragraph(f"<b>Bill To</b><br/>{cust_name}<br/>{cust_mobile}", normal),
-            Paragraph(f"<b>Booking</b><br/>#{booking_no}<br/>{service_name}", normal),
+            Paragraph("<br/>".join(bill_to_lines), normal),
+            Paragraph("<br/>".join(booking_lines), normal),
             Paragraph(f"<b>Date</b><br/>{created_str}<br/><b>Status:</b> {status_label}", normal),
         ]
     ]
@@ -2096,8 +2180,19 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
 
     # Footer
     story.append(Spacer(1, 16))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=rl_colors.HexColor("#E5E7EB")))
-    story.append(Paragraph("This is a computer-generated quotation and does not require a signature.", small))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=rl_colors.HexColor("#E5E7EB"), spaceAfter=6))
+
+    footer_lines = [
+        "This is a computer-generated quotation and does not require a physical signature.",
+        "Prices are estimates and may vary based on actual parts used during repair.",
+        "This quotation is valid for 7 days from the date of issue.",
+    ]
+    if domain_phone or domain_email:
+        contact_info = "  |  ".join(filter(None, [domain_phone, domain_email]))
+        footer_lines.append(f"For queries, contact us: {contact_info}")
+
+    for line in footer_lines:
+        story.append(Paragraph(line, small))
 
     doc.build(story)
     buffer.seek(0)
@@ -2140,6 +2235,9 @@ async def get_quotation_pdf(
                 "business_name": domain.business_name or domain.name,
                 "address": domain.address or "",
                 "gstin": domain.gstin or "",
+                "support_phone": getattr(domain, "support_phone", None) or "",
+                "support_email": getattr(domain, "support_email", None) or "",
+                "logo_url": getattr(domain, "logo_url", None) or "",
             }
     except Exception:
         pass

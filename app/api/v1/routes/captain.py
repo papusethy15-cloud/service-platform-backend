@@ -948,6 +948,10 @@ async def captain_request_withdrawal(
     if payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be greater than 0.")
 
+    MIN_WITHDRAWAL = 100.0
+    if payload.amount < MIN_WITHDRAWAL:
+        raise HTTPException(status_code=400, detail=f"Minimum withdrawal amount is ₹{MIN_WITHDRAWAL:.0f}.")
+
     if (wallet.balance or 0) < payload.amount:
         raise HTTPException(
             status_code=400,

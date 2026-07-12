@@ -459,6 +459,31 @@ async def admin_review_withdrawal(
     wr.reviewed_at = now
 
     await db.commit()
+
+    # ── Push notification to the technician ─────────────────────────────
+    try:
+        from app.models.technician import Technician
+        from app.models.wallet import WithdrawalRequest as _WR
+        _tech = (await db.execute(
+            select(Technician).where(Technician.id == wr.technician_id)
+        )).scalar_one_or_none()
+        if _tech and getattr(_tech, "fcm_token", None):
+            from app.utils.fcm import send_simple_push
+            if action == "APPROVE":
+                _title = "Withdrawal Approved ✅"
+                _body  = f"Your withdrawal of ₹{wr.amount:.0f} has been approved and is being processed."
+            else:
+                _title = "Withdrawal Request Update"
+                _body  = f"Your withdrawal of ₹{wr.amount:.0f} was not approved. {payload.admin_notes or 'Please contact admin for details.'}"
+            await send_simple_push(
+                fcm_token=_tech.fcm_token,
+                title=_title,
+                body=_body,
+                data={"type": "WITHDRAWAL_UPDATE", "status": wr.status},
+            )
+    except Exception:
+        pass  # Push failure must never block the API response
+
     return success_response(data={"status": wr.status}, message=f"Withdrawal request {wr.status.lower()}")
 
 

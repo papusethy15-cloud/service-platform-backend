@@ -52,7 +52,17 @@ async def _get_technician_for_user(user_id: str, db: AsyncSession) -> Technician
     return tech
 
 
-def _tech_profile(tech: Technician) -> dict:
+async def _tech_profile(tech: Technician, db: AsyncSession) -> dict:
+    # Compute total_jobs live: count CLOSED + SETTLED bookings for this technician
+    closed_statuses = [BookingStatus.CLOSED, BookingStatus.SETTLED]
+    jobs_result = await db.execute(
+        select(func.count(Booking.id)).where(
+            Booking.technician_id == tech.id,
+            Booking.status.in_(closed_statuses),
+        )
+    )
+    live_total_jobs = jobs_result.scalar() or 0
+
     return {
         "id":               str(tech.id),
         "user_id":          str(tech.user_id),
@@ -63,7 +73,7 @@ def _tech_profile(tech: Technician) -> dict:
         "city":             tech.city,
         "area":             tech.area,
         "rating":           tech.rating,
-        "total_jobs":       tech.total_jobs,
+        "total_jobs":       live_total_jobs,
         "status":           tech.status.value if tech.status else None,
         "is_online":        tech.is_online,
         "profile_image":    tech.profile_image,
@@ -103,7 +113,7 @@ async def captain_me(
     db: AsyncSession = Depends(get_db),
 ):
     tech = await _get_technician_for_user(current_user["user_id"], db)
-    return success_response(data=_tech_profile(tech))
+    return success_response(data=await _tech_profile(tech, db))
 
 
 # ── Profile update ─────────────────────────────────────────────────────────
@@ -160,7 +170,7 @@ async def captain_update_profile(
 
     await db.commit()
     await db.refresh(tech)
-    return success_response(data=_tech_profile(tech), message="Profile updated.")
+    return success_response(data=await _tech_profile(tech, db), message="Profile updated.")
 
 
 @router.put("/me/status", summary="Captain: go online / offline [Technician]")

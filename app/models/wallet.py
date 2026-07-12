@@ -45,5 +45,6 @@ class WithdrawalRequest(Base):
     reviewed_by = Column(UUID(as_uuid=True), nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     wallet_txn_id = Column(UUID(as_uuid=True), ForeignKey("wallet_transactions.id"), nullable=True)
+    payment_reference = Column(String(300), nullable=True)  # UTR / UPI ref / cheque no filled by admin on approval
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

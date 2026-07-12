@@ -389,6 +389,7 @@ async def admin_list_withdrawal_requests(
             "bank_name": wr.bank_name,
             "notes": wr.notes,
             "admin_notes": wr.admin_notes,
+            "payment_reference": wr.payment_reference,
             "reviewed_at": wr.reviewed_at.isoformat() if wr.reviewed_at else None,
             "created_at": wr.created_at.isoformat() if wr.created_at else None,
         })
@@ -400,8 +401,9 @@ async def admin_list_withdrawal_requests(
 
 # ─── Admin: approve or reject a withdrawal request ──────────────
 class WithdrawalReviewPayload(BaseModel):
-    action: str          # "APPROVE" or "REJECT"
+    action: str                      # "APPROVE" or "REJECT"
     admin_notes: str | None = None
+    payment_reference: str | None = None  # UTR / UPI Ref / Cheque No filled by admin
 
 @router.post("/withdrawal-requests/{request_id}/review", summary="Admin: approve or reject withdrawal [Admin]")
 async def admin_review_withdrawal(
@@ -446,11 +448,13 @@ async def admin_review_withdrawal(
             balance_before=balance_before,
             balance_after=w.balance,
             description=f"Withdrawal approved by admin. {payload.admin_notes or ''}".strip(),
+            reference_id=payload.payment_reference,  # UTR / UPI ref stored on the transaction
             status="SUCCESS",
         )
         db.add(txn)
         await db.flush()
         wr.wallet_txn_id = txn.id
+        wr.payment_reference = payload.payment_reference  # also store on the request for quick display
         wr.status = "APPROVED"
     else:
         wr.status = "REJECTED"

@@ -531,14 +531,35 @@ async def captain_earnings(
     approved_commission = float(comm_row.approved or 0)
     commission_on_hold  = round(pending_commission + approved_commission, 2)
 
+    # ── Pending withdrawal requests (submitted but not yet approved/rejected) ──
+    # These amounts are still IN wallet.balance but logically already "spoken for".
+    from app.models.wallet import WithdrawalRequest
+    pending_wr_result = await db.execute(
+        select(func.coalesce(func.sum(WithdrawalRequest.amount), 0.0))
+        .where(
+            WithdrawalRequest.technician_id == tech.id,
+            WithdrawalRequest.status == "PENDING",
+        )
+    )
+    pending_withdrawal_amount = float(pending_wr_result.scalar() or 0)
+
+    raw_balance = float(wallet.balance) if wallet else 0.0
+    # Withdrawable = actual balance minus any in-flight pending withdrawal amounts
+    withdrawable_balance = max(round(raw_balance - pending_withdrawal_amount, 2), 0.0)
+
+    has_pending_withdrawal = pending_withdrawal_amount > 0
+
     return success_response(data={
-        "balance":              float(wallet.balance) if wallet else 0.0,
-        "today_earnings":       today_credit,
-        "total_jobs":           tech.total_jobs,
-        "rating":               tech.rating,
-        "commission_on_hold":   commission_on_hold,   # settled but not yet paid into wallet
-        "pending_commission":   round(pending_commission,  2),   # settled, awaiting admin approval
-        "approved_commission":  round(approved_commission, 2),   # approved, payout scheduled
+        "balance":                  raw_balance,
+        "withdrawable_balance":     withdrawable_balance,        # what technician can actually request
+        "pending_withdrawal_amount": round(pending_withdrawal_amount, 2),  # already-submitted, not yet processed
+        "has_pending_withdrawal":   has_pending_withdrawal,
+        "today_earnings":           today_credit,
+        "total_jobs":               tech.total_jobs,
+        "rating":                   tech.rating,
+        "commission_on_hold":       commission_on_hold,   # settled but not yet paid into wallet
+        "pending_commission":       round(pending_commission,  2),
+        "approved_commission":      round(approved_commission, 2),
     })
 
 
@@ -968,24 +989,57 @@ async def captain_request_withdrawal(
     if payload.amount < MIN_WITHDRAWAL:
         raise HTTPException(status_code=400, detail=f"Minimum withdrawal amount is ₹{MIN_WITHDRAWAL:.0f}.")
 
-    if (wallet.balance or 0) < payload.amount:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Insufficient balance. Available: ₹{wallet.balance:.2f}"
-        )
-
+    # ── Validate payment method first ──
     if not payload.upi_id and not payload.bank_account:
         raise HTTPException(status_code=400, detail="Provide either a UPI ID or bank account details.")
 
-    # Check for any PENDING withdrawal request (one at a time)
-    existing = (await db.execute(
+    # ── Check for any existing PENDING withdrawal request (one at a time only) ──
+    existing_pending = (await db.execute(
         select(WithdrawalRequest).where(
             WithdrawalRequest.technician_id == tech.id,
             WithdrawalRequest.status == "PENDING",
         )
     )).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="You already have a pending withdrawal request. Wait for admin to process it.")
+    if existing_pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already have a pending withdrawal request of ₹{existing_pending.amount:.0f}. Wait for admin to process it before submitting a new one."
+        )
+
+    # ── Compute how much is truly withdrawable ──
+    # wallet.balance includes amounts from PENDING withdrawal requests (not yet debited),
+    # so we subtract any in-flight pending total to get the true available amount.
+    pending_wr_total_result = await db.execute(
+        select(func.coalesce(func.sum(WithdrawalRequest.amount), 0.0))
+        .where(
+            WithdrawalRequest.technician_id == tech.id,
+            WithdrawalRequest.status == "PENDING",
+        )
+    )
+    pending_wr_total = float(pending_wr_total_result.scalar() or 0)
+    raw_balance = float(wallet.balance or 0)
+    withdrawable = max(round(raw_balance - pending_wr_total, 2), 0.0)
+
+    if payload.amount > raw_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient balance. Wallet balance: ₹{raw_balance:.2f}. Requested: ₹{payload.amount:.2f}."
+        )
+
+    if payload.amount > withdrawable:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient withdrawable balance. "
+                f"Wallet: ₹{raw_balance:.2f}, "
+                f"Pending withdrawal hold: ₹{pending_wr_total:.2f}, "
+                f"Available to withdraw: ₹{withdrawable:.2f}."
+            )
+        )
+
+    # ── Amount precision guard ──
+    if round(payload.amount, 2) != payload.amount:
+        payload.amount = round(payload.amount, 2)
 
     req = WithdrawalRequest(
         technician_id=tech.id,

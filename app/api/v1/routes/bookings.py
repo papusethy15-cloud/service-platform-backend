@@ -13,7 +13,8 @@ from app.models.booking import Booking, BookingStatus, BookingStatusLog, Booking
 from app.models.customer import Customer, CustomerAddress
 from app.models.technician import Technician
 from app.models.tracking import TrackingLocation
-from app.models.domain import Domain
+from app.models.domain import Domain, DomainCity
+from app.models.city import City as CityModel
 from app.models.quotation import Quotation as QuotationModel, QuotationServiceItem, QuotationPartItem, QuotationAppliance
 from app.api.v1.schemas.booking import (
     CreateBookingRequest, UpdateBookingRequest,
@@ -518,12 +519,18 @@ async def create_booking(
         if _cpn:
             _cpn.used_count = (_cpn.used_count or 0) + 1
 
-    # ── Resolve city_id ────────────────────────────────────────────────────
+    # ── Resolve city_id + city name ──────────────────────────────────────
     from app.models.city import City as CityModel
     from app.models.domain import DomainCity
     resolved_city_id: UUID | None = None
+    resolved_city_name: str | None = payload.city  # start with whatever was sent
     if payload.city_id:
         resolved_city_id = UUID(payload.city_id)
+        # Fetch city name from DB so it's always stored (admin sends city_id but no city text)
+        if not resolved_city_name:
+            _c = (await db.execute(select(CityModel).where(CityModel.id == resolved_city_id))).scalar_one_or_none()
+            if _c:
+                resolved_city_name = _c.name
     elif payload.city and payload.domain_id:
         # Try to find a city linked to this domain that matches the city name
         dc_row = (await db.execute(
@@ -538,6 +545,7 @@ async def create_booking(
         )).first()
         if dc_row:
             resolved_city_id = dc_row.CityModel.id
+            resolved_city_name = dc_row.CityModel.name
     elif payload.city:
         # Fallback: match city by name globally
         city_row = (await db.execute(
@@ -545,6 +553,26 @@ async def create_booking(
         )).scalar_one_or_none()
         if city_row:
             resolved_city_id = city_row.id
+            resolved_city_name = city_row.name
+
+    # ── If city still unresolved, derive from the customer address ───────────
+    # Mobile app sends address_id but no city text/city_id — look up via address.city
+    if not resolved_city_id and payload.address_id:
+        _addr_for_city = (await db.execute(
+            select(CustomerAddress).where(CustomerAddress.id == UUID(payload.address_id))
+        )).scalar_one_or_none()
+        if _addr_for_city and _addr_for_city.city:
+            _addr_city_row = (await db.execute(
+                select(CityModel).where(
+                    CityModel.name.ilike(_addr_for_city.city),
+                    CityModel.is_active == True,
+                )
+            )).scalar_one_or_none()
+            if _addr_city_row:
+                resolved_city_id = _addr_city_row.id
+                resolved_city_name = _addr_city_row.name
+            else:
+                resolved_city_name = _addr_for_city.city  # store free-text city from address
 
     booking = Booking(
         booking_number=generate_booking_number(),
@@ -553,7 +581,7 @@ async def create_booking(
         service_name=service.name if service else payload.service_name,
         address_id=UUID(payload.address_id) if payload.address_id else None,
         address_line=payload.address_line,
-        city=payload.city,
+        city=resolved_city_name,
         city_id=resolved_city_id,
         scheduled_date=sched_date,
         scheduled_slot=payload.scheduled_slot,
@@ -659,13 +687,14 @@ async def list_bookings(
     from sqlalchemy import or_, and_, cast, String as SAString
     from datetime import datetime
 
-    # Build base query with LEFT JOINs for customer, service, technician, domain
+    # Build base query with LEFT JOINs for customer, service, technician, domain, city
     q = (
-        select(Booking, Customer, Service, Technician, Domain)
+        select(Booking, Customer, Service, Technician, Domain, CityModel)
         .outerjoin(Customer, Customer.id == Booking.customer_id)
         .outerjoin(Service, Service.id == Booking.service_id)
         .outerjoin(Technician, Technician.id == Booking.technician_id)
         .outerjoin(Domain, Domain.id == Booking.domain_id)
+        .outerjoin(CityModel, CityModel.id == Booking.city_id)
     )
 
     # Role-based scoping
@@ -738,7 +767,7 @@ async def list_bookings(
     )).all()
 
     items = []
-    for idx, (b, cust, svc, tech, domain) in enumerate(rows):
+    for idx, (b, cust, svc, tech, domain, city_row) in enumerate(rows):
         svc_name = b.service_name or (svc.name if svc else None) or "—"
         items.append({
             "id": str(b.id),
@@ -762,7 +791,7 @@ async def list_bookings(
             "appliance_model": b.appliance_model or None,
             "notes": b.notes or None,
             "cancelled_reason": b.cancelled_reason or None,
-            "city": b.city or None,
+            "city": b.city or (city_row.name if city_row else None),
             "city_id": str(b.city_id) if b.city_id else None,
             "coupon_code": b.coupon_code,
             "coupon_discount": b.coupon_discount or 0.0,
@@ -978,35 +1007,33 @@ async def track_booking(
 async def get_booking(booking_id: UUID, current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
     from app.models.service import Service
     row = (await db.execute(
-        select(Booking, Customer, Service, Technician, Domain)
+        select(Booking, Customer, Service, Technician, Domain, CityModel)
         .outerjoin(Customer, Customer.id == Booking.customer_id)
         .outerjoin(Service, Service.id == Booking.service_id)
         .outerjoin(Technician, Technician.id == Booking.technician_id)
         .outerjoin(Domain, Domain.id == Booking.domain_id)
+        .outerjoin(CityModel, CityModel.id == Booking.city_id)
         .where(Booking.id == booking_id)
     )).first()
     if not row:
         raise HTTPException(status_code=404, detail="Booking not found")
-    b, cust, svc, tech, domain = row
+    b, cust, svc, tech, domain, city_row = row
     svc_name = b.service_name or (svc.name if svc else None) or "—"
-    # Build address string from CustomerAddress if address_id exists
+    # Build address string from CustomerAddress if address_id exists (single query)
     addr_str = None
     addr_label = None
-    if b.address_id:
-        addr = (await db.execute(select(CustomerAddress).where(CustomerAddress.id == b.address_id))).scalar_one_or_none()
-        if addr:
-            parts = [p for p in [addr.address_line1, addr.city, addr.state, addr.pincode] if p]
-            addr_str   = ", ".join(parts) if parts else None
-            addr_label = addr.label
     addr_lat = None
     addr_lng = None
     addr_location_source = None
     if b.address_id:
-        _addr_geo = (await db.execute(select(CustomerAddress).where(CustomerAddress.id == b.address_id))).scalar_one_or_none()
-        if _addr_geo:
-            addr_lat = _addr_geo.latitude
-            addr_lng = _addr_geo.longitude
-            addr_location_source = getattr(_addr_geo, 'location_source', None)
+        addr = (await db.execute(select(CustomerAddress).where(CustomerAddress.id == b.address_id))).scalar_one_or_none()
+        if addr:
+            parts = [p for p in [addr.address_line1, addr.city, addr.state, addr.pincode] if p]
+            addr_str             = ", ".join(parts) if parts else None
+            addr_label           = addr.label
+            addr_lat             = addr.latitude
+            addr_lng             = addr.longitude
+            addr_location_source = getattr(addr, 'location_source', None)
     if not addr_str:
         parts = [p for p in [b.address_line, b.city, b.pincode] if p]
         addr_str = ", ".join(parts) if parts else None
@@ -1035,7 +1062,7 @@ async def get_booking(booking_id: UUID, current_user: dict = Depends(AnyAuthenti
         "base_amount": b.base_amount or 0, "discount_amount": b.discount_amount or 0,
         "gst_amount": b.gst_amount or 0, "total_amount": b.total_amount or 0,
         "priority": b.priority or "NORMAL",
-        "city": b.city or (addr_str.split(",")[1].strip() if addr_str and "," in addr_str else None),
+        "city": b.city or (city_row.name if city_row else None),
         "cancelled_reason": b.cancelled_reason,
         "domain_name": domain.name if domain else None,
         "domain_id": str(b.domain_id) if b.domain_id else None,

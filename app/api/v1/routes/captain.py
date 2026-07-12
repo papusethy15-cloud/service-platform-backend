@@ -940,7 +940,7 @@ async def captain_request_withdrawal(
 ):
     from app.models.wallet import Wallet, WithdrawalRequest
 
-    tech = await _get_tech_or_404(db, current_user)
+    tech = await _get_technician_for_user(current_user["user_id"], db)
     wallet = (await db.execute(select(Wallet).where(Wallet.technician_id == tech.id))).scalar_one_or_none()
     if not wallet:
         raise HTTPException(status_code=400, detail="No wallet found. You have no balance to withdraw.")
@@ -1003,7 +1003,7 @@ async def captain_list_withdrawal_requests(
 ):
     from app.models.wallet import WithdrawalRequest
 
-    tech = await _get_tech_or_404(db, current_user)
+    tech = await _get_technician_for_user(current_user["user_id"], db)
 
     total = (await db.execute(
         select(func.count(WithdrawalRequest.id)).where(WithdrawalRequest.technician_id == tech.id)

@@ -360,9 +360,10 @@ async def admin_list_withdrawal_requests(
     q = select(WithdrawalRequest)
     if status:
         q = q.where(WithdrawalRequest.status == status.upper())
-    total = (await db.execute(select(func.count(WithdrawalRequest.id)).where(
-        *([WithdrawalRequest.status == status.upper()] if status else [])
-    ))).scalar_one()
+    count_q = select(func.count(WithdrawalRequest.id))
+    if status:
+        count_q = count_q.where(WithdrawalRequest.status == status.upper())
+    total = (await db.execute(count_q)).scalar_one()
     items_r = await db.execute(q.order_by(WithdrawalRequest.created_at.desc()).offset((page - 1) * per_page).limit(per_page))
     items = items_r.scalars().all()
 

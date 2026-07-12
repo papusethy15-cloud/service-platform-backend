@@ -6,7 +6,7 @@ from uuid import UUID
 import random, string
 
 from app.core.database import get_db
-from app.models.technician import Technician, TechnicianSkill, TechnicianAvailability, TechnicianStatus
+from app.models.technician import Technician, TechnicianSkill, TechnicianAvailability, TechnicianStatus, TechnicianRating
 from app.models.user import User, UserRole
 from app.core.security import hash_password
 from app.api.v1.schemas.technician import (
@@ -20,6 +20,79 @@ router = APIRouter()
 
 def generate_tech_code():
     return "TECH" + ''.join(random.choices(string.digits, k=5))
+
+
+# ── PUBLIC: Online technician locations (for customer map view) ──────────────
+@router.get("/live-locations", summary="Online technician locations [Customer]")
+async def live_technician_locations(
+    city: str = Query(None, description="Filter by city name (optional)"),
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns id, name, city, last_lat, last_lng for all ONLINE technicians.
+    Only exposes fields safe for customer display — no mobile / identity data.
+    """
+    q = select(Technician).where(Technician.is_online.is_(True))
+    if city:
+        q = q.where(Technician.city.ilike(f"%{city}%"))
+    techs = (await db.execute(q.limit(200))).scalars().all()
+    return success_response(data=[
+        {
+            "id": str(t.id),
+            "name": t.name,
+            "city": t.city or "",
+            "area": t.area or "",
+            "latitude": float(t.last_lat) if t.last_lat else None,
+            "longitude": float(t.last_lng) if t.last_lng else None,
+            "rating": round(float(t.rating), 1) if t.rating else None,
+        }
+        for t in techs
+    ])
+
+
+# ── PUBLIC: Recent customer reviews (for certified-technicians screen) ────────
+@router.get("/public-reviews", summary="Recent customer reviews [Customer]")
+async def public_reviews(
+    limit: int = Query(10, ge=1, le=50, description="Number of reviews to return"),
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns up to `limit` random reviews with a non-empty review text and
+    rating >= 4.  Safe for public display — customer name is first name only.
+    """
+    from app.models.booking import Booking
+    from app.models.customer import Customer
+    from sqlalchemy import text as _text
+    # Join ratings → bookings → customers to get reviewer first name + service name
+    rows = (await db.execute(
+        select(
+            TechnicianRating.rating,
+            TechnicianRating.review,
+            TechnicianRating.created_at,
+            Customer.name.label("customer_name"),
+            Booking.service_name,
+        )
+        .join(Booking, TechnicianRating.booking_id == Booking.id, isouter=True)
+        .join(Customer, TechnicianRating.customer_id == Customer.id, isouter=True)
+        .where(
+            TechnicianRating.review.isnot(None),
+            TechnicianRating.review != "",
+            TechnicianRating.rating >= 4,
+        )
+        .order_by(func.random())
+        .limit(limit)
+    )).all()
+
+    return success_response(data=[
+        {
+            "rating": round(float(r.rating), 1),
+            "review": r.review,
+            "customer_name": (r.customer_name or "Customer").split()[0],  # first name only
+            "service_name": r.service_name or "",
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ])
 
 
 # ── LIST ───────────────────────────────────────────────────────────────────────

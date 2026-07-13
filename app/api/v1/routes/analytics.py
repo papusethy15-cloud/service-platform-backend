@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, or_, desc
 from datetime import datetime, timedelta
 from app.core.database import get_db
 from app.api.deps import AnyStaff
@@ -8,6 +8,24 @@ from app.utils.response import success_response
 
 router = APIRouter()
 
+
+# ── Terminal "paid/closed" statuses — bookings that count as revenue-generating
+# The workflow goes: COMPLETED → INVOICE_GENERATED → PAYMENT_PENDING → PAID → CLOSED/SETTLED
+# All these terminal statuses represent real jobs that generated revenue.
+REVENUE_STATUSES = [
+    "COMPLETED", "INVOICE_GENERATED", "PAYMENT_PENDING",
+    "PAID", "CLOSED", "SETTLED",
+]
+
+# "Active" (in-flight) statuses — bookings that are currently being worked on
+ACTIVE_STATUSES = [
+    "CONFIRMED", "ASSIGNED", "ACCEPTED", "EN_ROUTE", "ARRIVED",
+    "INSPECTING", "IN_PROGRESS", "WORK_STARTED", "WORK_PAUSED",
+    "QUOTATION_APPROVED", "TECHNICIAN_ACCEPTED", "PENDING_VERIFICATION",
+]
+
+# "Awaiting action" statuses — show in pending/attention-needed count
+PENDING_STATUSES = ["PENDING", "RESCHEDULED", "CANCELLATION_REQUESTED"]
 
 
 @router.get("/dashboard", summary="Dashboard KPIs [Admin]")
@@ -28,6 +46,10 @@ async def dashboard_kpis(
     since_30 = now - timedelta(days=29)
     since_6m = now - timedelta(days=180)
 
+    # Build revenue-status filter (any terminal paid status)
+    def revenue_filter():
+        return Booking.status.in_(REVENUE_STATUSES)
+
     # ── Booking helpers (inline try/except for safety) ────────────────────
     async def bk_count(where_clause=None):
         q = select(func.count()).select_from(Booking)
@@ -47,23 +69,39 @@ async def dashboard_kpis(
         except Exception:
             return 0.0
 
-    total_bookings        = await bk_count()
-    today_bookings        = await bk_count(Booking.created_at >= today)
-    week_bookings         = await bk_count(Booking.created_at >= week_start)
-    pending_bookings      = await bk_count(Booking.status == BookingStatus.PENDING)
-    confirmed_bookings    = await bk_count(Booking.status == BookingStatus.CONFIRMED)
-    in_progress_bookings  = await bk_count(Booking.status == BookingStatus.IN_PROGRESS)
-    completed_this_month  = await bk_count(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= month_start))
-    cancelled_this_month  = await bk_count(and_(Booking.status == BookingStatus.CANCELLED, Booking.created_at >= month_start))
-    total_completed       = await bk_count(Booking.status == BookingStatus.COMPLETED)
+    total_bookings = await bk_count()
+    today_bookings = await bk_count(Booking.created_at >= today)
+    week_bookings  = await bk_count(Booking.created_at >= week_start)
 
-    # ── Revenue ────────────────────────────────────────────────────────────
-    total_revenue  = await bk_sum(Booking.status == BookingStatus.COMPLETED)
-    month_revenue  = await bk_sum(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= month_start))
-    week_revenue   = await bk_sum(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= week_start))
-    today_revenue  = await bk_sum(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= today))
+    # Pending = PENDING + RESCHEDULED + CANCELLATION_REQUESTED (needs attention)
+    pending_bookings = await bk_count(Booking.status.in_(PENDING_STATUSES))
+
+    # Confirmed = confirmed but not yet assigned/en-route
+    confirmed_bookings = await bk_count(Booking.status == BookingStatus.CONFIRMED)
+
+    # In-progress = all active in-flight statuses
+    in_progress_bookings = await bk_count(Booking.status.in_(ACTIVE_STATUSES))
+
+    # Completed this month = any terminal revenue status created this month
+    completed_this_month = await bk_count(
+        and_(revenue_filter(), Booking.created_at >= month_start)
+    )
+
+    # Cancelled this month
+    cancelled_this_month = await bk_count(
+        and_(Booking.status == BookingStatus.CANCELLED, Booking.created_at >= month_start)
+    )
+
+    # Total completed = all terminal revenue statuses ever
+    total_completed = await bk_count(revenue_filter())
+
+    # ── Revenue — sum total_amount for all terminal statuses ──────────────
+    total_revenue  = await bk_sum(revenue_filter())
+    month_revenue  = await bk_sum(and_(revenue_filter(), Booking.created_at >= month_start))
+    week_revenue   = await bk_sum(and_(revenue_filter(), Booking.created_at >= week_start))
+    today_revenue  = await bk_sum(and_(revenue_filter(), Booking.created_at >= today))
     prev_month_rev = await bk_sum(and_(
-        Booking.status == BookingStatus.COMPLETED,
+        revenue_filter(),
         Booking.created_at >= prev_month_start,
         Booking.created_at <= prev_month_end,
     ))
@@ -73,7 +111,7 @@ async def dashboard_kpis(
     )
     completion_rate = round((total_completed / total_bookings * 100) if total_bookings else 0, 1)
 
-    # ── Revenue chart — last 30 days ───────────────────────────────────────
+    # ── Revenue chart — last 30 days (all revenue statuses) ───────────────
     revenue_chart = []
     try:
         rows = (await db.execute(
@@ -82,7 +120,7 @@ async def dashboard_kpis(
                 func.coalesce(func.sum(Booking.total_amount), 0).label("rev"),
                 func.count(Booking.id).label("cnt"),
             )
-            .where(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= since_30))
+            .where(and_(revenue_filter(), Booking.created_at >= since_30))
             .group_by(func.date(Booking.created_at))
             .order_by(func.date(Booking.created_at))
         )).all()
@@ -90,7 +128,7 @@ async def dashboard_kpis(
     except Exception:
         revenue_chart = []
 
-    # ── Booking status breakdown (last 30 days) ───────────────────────────
+    # ── Booking status breakdown (last 30 days) — all statuses ───────────
     status_chart = {}
     try:
         rows = (await db.execute(
@@ -114,13 +152,13 @@ async def dashboard_kpis(
             .group_by(func.to_char(Booking.created_at, "YYYY-MM"))
             .order_by(func.to_char(Booking.created_at, "YYYY-MM"))
         )).all()
-        # Get completed per month separately to avoid complex join
+        # "Completed" in monthly trend = all terminal revenue statuses
         comp_rows = (await db.execute(
             select(
                 func.to_char(Booking.created_at, "YYYY-MM").label("month"),
                 func.count(Booking.id).label("completed"),
             )
-            .where(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= since_6m))
+            .where(and_(revenue_filter(), Booking.created_at >= since_6m))
             .group_by(func.to_char(Booking.created_at, "YYYY-MM"))
         )).all()
         comp_map = {r.month: r.completed for r in comp_rows}
@@ -155,25 +193,63 @@ async def dashboard_kpis(
     active_techs = await tech_count(and_(Technician.is_active == True, Technician.status == "ACTIVE"))
     total_techs  = await tech_count(Technician.is_active == True)
 
-    # ── Top technicians ───────────────────────────────────────────────────
+    # ── Top technicians — ranked by live job count from bookings ──────────
+    # Since technician.total_jobs may be stale, compute it live from bookings
     top_technicians = []
     try:
-        techs = (await db.execute(
-            select(Technician)
-            .where(Technician.is_active == True)
-            .order_by(desc(Technician.total_jobs), desc(Technician.rating))
+        # Live count: how many terminal-status bookings are assigned to each tech
+        tech_job_rows = (await db.execute(
+            select(
+                Booking.technician_id,
+                func.count(Booking.id).label("job_count"),
+            )
+            .where(
+                and_(
+                    Booking.technician_id.isnot(None),
+                    revenue_filter(),
+                )
+            )
+            .group_by(Booking.technician_id)
+            .order_by(desc(func.count(Booking.id)))
             .limit(5)
-        )).scalars().all()
-        top_technicians = [
-            {
-                "id": str(t.id),
-                "name": t.name,
-                "rating": float(t.rating or 0),
-                "total_jobs": int(t.total_jobs or 0),
-                "status": t.status,
-            }
-            for t in techs
-        ]
+        )).all()
+
+        if tech_job_rows:
+            tech_ids = [r.technician_id for r in tech_job_rows]
+            job_count_map = {r.technician_id: r.job_count for r in tech_job_rows}
+            techs = (await db.execute(
+                select(Technician)
+                .where(Technician.id.in_(tech_ids))
+            )).scalars().all()
+            tech_map = {t.id: t for t in techs}
+            top_technicians = [
+                {
+                    "id": str(tid),
+                    "name": tech_map[tid].name if tid in tech_map else "Unknown",
+                    "rating": float(tech_map[tid].rating or 0) if tid in tech_map else 0.0,
+                    "total_jobs": job_count_map[tid],
+                    "status": tech_map[tid].status if tid in tech_map else "ACTIVE",
+                }
+                for tid in tech_ids if tid in tech_map
+            ]
+        else:
+            # Fallback: just list active technicians with stored total_jobs
+            techs = (await db.execute(
+                select(Technician)
+                .where(Technician.is_active == True)
+                .order_by(desc(Technician.total_jobs), desc(Technician.rating))
+                .limit(5)
+            )).scalars().all()
+            top_technicians = [
+                {
+                    "id": str(t.id),
+                    "name": t.name,
+                    "rating": float(t.rating or 0),
+                    "total_jobs": int(t.total_jobs or 0),
+                    "status": t.status,
+                }
+                for t in techs
+            ]
     except Exception:
         top_technicians = []
 
@@ -268,7 +344,7 @@ async def revenue_analytics(
                 func.coalesce(func.sum(Booking.total_amount), 0).label("revenue"),
                 func.count(Booking.id).label("count"),
             )
-            .where(and_(Booking.status == BookingStatus.COMPLETED, Booking.created_at >= since))
+            .where(and_(Booking.status.in_(REVENUE_STATUSES), Booking.created_at >= since))
             .group_by(func.date(Booking.created_at))
             .order_by(func.date(Booking.created_at))
         )

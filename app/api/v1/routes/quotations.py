@@ -1613,7 +1613,7 @@ async def add_quotation_appliance(
                     )
                     # Flush so the raw-SQL insert is visible to the ORM select inside _recalculate
                     await db.flush()
-                    db.expire(quotation)  # force re-read of totals from DB
+                    db.expire_all()  # force re-read of all cached ORM objects incl. service items
                     await _recalculate_quotation(db, quotation)
     except Exception as _auto_svc_err:
         import logging as _log2

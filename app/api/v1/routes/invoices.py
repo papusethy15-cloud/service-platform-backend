@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from app.utils.timezone import now_ist, ist_invoice_suffix
+from app.utils.timezone import now_ist, ist_invoice_suffix, now_naive
 from datetime import datetime
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1084,7 +1084,7 @@ async def send_invoice_email(
     db: AsyncSession = Depends(get_db),
 ):
     invoice = await _get_invoice_or_404(db, invoice_id)
-    invoice.sent_email_at = now_ist()
+    invoice.sent_email_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     await db.commit()
     return success_response(
         data={"invoice_id": str(invoice.id), "recipient": payload.recipient, "sent_at": invoice.sent_email_at.isoformat()},
@@ -1100,7 +1100,7 @@ async def send_invoice_whatsapp(
     db: AsyncSession = Depends(get_db),
 ):
     invoice = await _get_invoice_or_404(db, invoice_id)
-    invoice.sent_whatsapp_at = now_ist()
+    invoice.sent_whatsapp_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     await db.commit()
     return success_response(
         data={"invoice_id": str(invoice.id), "recipient": payload.recipient, "sent_at": invoice.sent_whatsapp_at.isoformat()},

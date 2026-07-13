@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from uuid import UUID
 from typing import Optional
-from app.utils.timezone import now_ist
+from app.utils.timezone import now_ist, now_naive
 from datetime import datetime, timezone
 from pydantic import BaseModel as PydanticModel
 import httpx
@@ -585,7 +585,7 @@ async def update_callback(
     # Set called_at server-side (naive UTC) when transitioning to CALLED.
     # Never trust a client-supplied datetime to avoid timezone offset errors.
     if new_status == CallbackStatus.CALLED and cb.called_at is None:
-        cb.called_at = now_ist()
+        cb.called_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
 
     await db.commit()
     await db.refresh(cb)

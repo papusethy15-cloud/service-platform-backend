@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import logging
-from app.utils.timezone import now_ist, ist_invoice_suffix
+from app.utils.timezone import now_ist, now_naive, ist_invoice_suffix
 from datetime import datetime
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -145,7 +145,7 @@ async def _apply_invoice_payment_state(db: AsyncSession, invoice: Invoice):
         invoice.status = InvoiceStatus.PARTIALLY_PAID
     else:
         invoice.status = InvoiceStatus.PAID
-        invoice.paid_at = now_ist()
+        invoice.paid_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
 
 
 def _payment_summary(transaction: PaymentTransaction, booking=None, customer_name: str = None, invoice_number: str = None):
@@ -274,7 +274,7 @@ async def verify_payment(
     transaction.provider_signature = payload.provider_signature
     transaction.status = PaymentStatus.SUCCESS
     transaction.verified_by = UUID(current_user["user_id"])
-    transaction.paid_at = now_ist()
+    transaction.paid_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     if payload.amount is not None:
         transaction.amount = payload.amount
     if payload.notes:
@@ -328,7 +328,7 @@ async def cash_payment(
     if is_pay_later and not due_collect_at:
         raise HTTPException(status_code=400, detail="due_collect_at is required when is_pay_later is set — pick the date/time to remind for collection.")
     txn_status   = PaymentStatus.PENDING if is_pay_later else PaymentStatus.SUCCESS
-    txn_paid_at  = None if is_pay_later else now_ist()
+    txn_paid_at  = None if is_pay_later else now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     txn_method   = PaymentMethod.PAY_LATER if is_pay_later else PaymentMethod.CASH
 
     role = current_user["role"]
@@ -485,7 +485,7 @@ async def bank_transfer_payment(
         amount=payload.amount,
         reference_number=payload.reference_number,
         notes=payload.notes,
-        paid_at=now_ist(),
+        paid_at=now_naive(),  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     )
     db.add(transaction)
     await db.flush()
@@ -674,7 +674,7 @@ async def mark_pay_later_collected(
 
     txn.status = PaymentStatus.SUCCESS
     txn.method = PaymentMethod.CASH  # collected as cash
-    txn.paid_at = now_ist()
+    txn.paid_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     txn.verified_by = UUID(current_user["user_id"])
     txn.cash_collection_status = CashCollectionStatus.COLLECTED
     txn.notes = (txn.notes or "") + f" [Marked collected by CCO {current_user['user_id']} on {now_ist().date()}]"

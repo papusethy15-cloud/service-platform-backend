@@ -5,7 +5,7 @@ When a technician collects cash from a customer, a CashCollectionRecord is creat
 Admin/CCO can view pending collections per technician and mark them as collected.
 A booking with pending cash collection cannot be settled (commission blocked).
 """
-from app.utils.timezone import now_ist
+from app.utils.timezone import now_ist, now_naive
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -224,7 +224,7 @@ async def mark_collected(
 
     rec.status       = CashCollectionStatus.COLLECTED
     rec.collected_by = UUID(current_user["user_id"])
-    rec.collected_at = now_ist()
+    rec.collected_at = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE
     rec.notes        = payload.notes
 
     # Also update the payment transaction's cash_collection_status
@@ -279,7 +279,7 @@ async def collect_all_for_technician(
     if not pending:
         raise HTTPException(400, "No pending cash collections for this technician")
 
-    now = now_ist()
+    now = now_naive()  # naive UTC for TIMESTAMP WITHOUT TIME ZONE (collected_at column)
     admin_id = UUID(current_user["user_id"])
     total = 0.0
 

@@ -23,8 +23,13 @@ def now_ist() -> datetime:
 
 
 def now_utc() -> datetime:
-    """Return current datetime in UTC (timezone-aware). Use for DB writes."""
+    """Return current datetime in UTC (timezone-aware). Use for TIMESTAMPTZ DB writes."""
     return datetime.now(timezone.utc)
+
+
+def now_naive() -> datetime:
+    """Return current UTC datetime WITHOUT tzinfo. Use for TIMESTAMP WITHOUT TIME ZONE columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def today_ist() -> date:

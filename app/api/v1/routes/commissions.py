@@ -41,6 +41,69 @@ class PartRuleIn(BaseModel):
     rate:               float = 0.0
 
 
+
+# ── Service Price Preview (for commission group editor) ───────────────────────
+@router.get("/service-price-preview", summary="Get service price structure for commission setting [Admin]")
+async def service_price_preview(
+    service_id: str = Query(..., description="Service UUID"),
+    domain_id:  Optional[str] = Query(None, description="Optional domain UUID to filter city prices"),
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns the base price + all city override prices for a service.
+    If domain_id is provided, also returns which cities are linked to that domain
+    so the admin knows which city prices apply for technicians under that domain.
+    Priority: domain city price > city price > base price.
+    """
+    from app.models.service import Service
+    from app.models.domain import ServiceCityPrice, DomainCity
+    from app.models.city import City
+
+    svc = (await db.execute(
+        select(Service).where(Service.id == UUID(service_id), Service.is_active == True)
+    )).scalar_one_or_none()
+    if not svc:
+        raise HTTPException(404, "Service not found")
+
+    # All city prices for this service
+    city_rows = (await db.execute(
+        select(ServiceCityPrice, City.name.label("city_name"), City.state.label("city_state"))
+        .join(City, City.id == ServiceCityPrice.city_id)
+        .where(ServiceCityPrice.service_id == UUID(service_id), ServiceCityPrice.is_available == True)
+        .order_by(City.name)
+    )).all()
+
+    # If domain scoped — which cities does this domain serve?
+    domain_city_ids: set = set()
+    if domain_id:
+        dc_rows = (await db.execute(
+            select(DomainCity.city_id).where(DomainCity.domain_id == UUID(domain_id))
+        )).scalars().all()
+        domain_city_ids = {str(cid) for cid in dc_rows}
+
+    city_prices = []
+    for row in city_rows:
+        cp = row.ServiceCityPrice
+        city_id_str = str(cp.city_id)
+        in_domain = (len(domain_city_ids) == 0) or (city_id_str in domain_city_ids)
+        city_prices.append({
+            "city_id":    city_id_str,
+            "city_name":  row.city_name,
+            "city_state": row.city_state,
+            "price":      cp.price,
+            "in_domain":  in_domain,   # True if this city is served by the selected domain
+        })
+
+    return success_response(data={
+        "service_id":   str(svc.id),
+        "service_name": svc.name,
+        "base_price":   svc.base_price,
+        "gst_percent":  svc.gst_percent,
+        "city_prices":  city_prices,
+        "has_overrides": len(city_prices) > 0,
+    })
+
 # ── Commission Rules ──────────────────────────────────────────────────────────
 @router.get("/rules", summary="Commission rules [Admin]")
 async def list_rules(current_user: dict = Depends(AdminOnly), db: AsyncSession = Depends(get_db)):

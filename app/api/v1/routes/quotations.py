@@ -1,6 +1,6 @@
 import asyncio
 from app.core.background_tasks import track_task
-from app.utils.timezone import now_ist
+from app.utils.timezone import now_ist, now_utc
 from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
@@ -550,7 +550,7 @@ async def submit_quotation(
     if quotation.status not in EDITABLE_STATUSES:
         raise HTTPException(status_code=400, detail="Quotation is not in a submittable state")
     quotation.status = QuotationStatus.SUBMITTED
-    quotation.submitted_at = now_ist()
+    quotation.submitted_at = now_utc().replace(tzinfo=None)  # naive UTC for TIMESTAMP WITHOUT TIME ZONE column
     notes = (payload.notes if payload and payload.notes else None) or "Quotation submitted"
     await _add_status_log(db, quotation, current_user["user_id"], notes)
     # Explicit booking query — async sessions don't support lazy relationship loading
@@ -661,7 +661,7 @@ async def approve_quotation(
             detail="Cannot approve quotation: no technician assigned to this booking yet. Assign a technician first."
         )
     quotation.status = QuotationStatus.APPROVED
-    quotation.approved_at = now_ist()
+    quotation.approved_at = now_utc().replace(tzinfo=None)  # naive UTC for TIMESTAMP WITHOUT TIME ZONE column
     quotation.approved_by = UUID(current_user["user_id"])
     _PRE_WORK_STATUSES = {
         BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED,
@@ -1662,7 +1662,7 @@ async def mark_repeat_complaint(
     quotation = await _get_quotation_or_404(db, quotation_id)
 
     label = payload.appliance_label.strip()
-    confirmed_at = now_ist() if payload.is_repeat else None
+    confirmed_at = now_utc().replace(tzinfo=None) if payload.is_repeat else None  # naive UTC for DateTime column
 
     # Update quotation_appliances row
     await db.execute(

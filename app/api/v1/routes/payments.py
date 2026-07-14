@@ -956,3 +956,92 @@ async def razorpay_transactions(
             "total_count": stat_row.count_total or 0,
         },
     })
+
+
+# ── Cancel duplicate PENDING transactions for a booking [Admin/CCO] ───────────
+@router.post("/{transaction_id}/cancel-pending-dupes", summary="Cancel PENDING duplicate transactions for same booking [Admin]")
+async def cancel_pending_dupes(
+    transaction_id: UUID,
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    When one transaction is SUCCESS for a booking, admin can call this to cancel
+    all other PENDING transactions on the same booking (Razorpay duplicate attempts).
+    The target transaction_id is the SUCCESS one — all OTHER PENDING on same booking get CANCELLED.
+    Also works the other way: pass a PENDING transaction_id to cancel just that one.
+    """
+    role = current_user["role"]
+    if role not in {"SUPER_ADMIN", "ADMIN", "CCO", "ACCOUNTANT"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    txn = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.id == transaction_id,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Cancel all PENDING transactions on the same booking (excluding the target itself)
+    pending_dupes = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.booking_id == txn.booking_id,
+            PaymentTransaction.id != txn.id,
+            PaymentTransaction.status == PaymentStatus.PENDING,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalars().all()
+
+    cancelled_ids = []
+    for dupe in pending_dupes:
+        dupe.status = PaymentStatus.CANCELLED  # type: ignore[attr-defined]
+        dupe.notes = (
+            (dupe.notes or "") +
+            f" [Cancelled by admin {current_user['user_id']} on {now_ist().date()} — duplicate pending for booking {txn.booking_id}]"
+        )[:1000]
+        cancelled_ids.append(str(dupe.id))
+
+    await db.commit()
+    return success_response(
+        data={"cancelled_count": len(cancelled_ids), "cancelled_ids": cancelled_ids},
+        message=f"{len(cancelled_ids)} pending duplicate transaction(s) cancelled successfully",
+    )
+
+
+@router.post("/{transaction_id}/cancel", summary="Cancel a single PENDING transaction [Admin]")
+async def cancel_single_pending(
+    transaction_id: UUID,
+    current_user: dict = Depends(AnyAuthenticated),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a single PENDING transaction. Only PENDING transactions can be cancelled."""
+    role = current_user["role"]
+    if role not in {"SUPER_ADMIN", "ADMIN", "CCO", "ACCOUNTANT"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    txn = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.id == transaction_id,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if txn.status != PaymentStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only PENDING transactions can be cancelled. Current status: {txn.status.value}",
+        )
+
+    txn.status = PaymentStatus.CANCELLED  # type: ignore[attr-defined]
+    txn.notes = (
+        (txn.notes or "") +
+        f" [Cancelled by admin {current_user['user_id']} on {now_ist().date()}]"
+    )[:1000]
+    await db.commit()
+    return success_response(
+        data={"id": str(txn.id), "status": "CANCELLED"},
+        message="Transaction cancelled successfully",
+    )

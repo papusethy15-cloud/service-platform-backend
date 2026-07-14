@@ -2033,6 +2033,7 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     │  (c) 2026 BusinessName · Computer-generated quotation                   │
     └─────────────────────────────────────────────────────────────────────────┘
     """
+    import datetime as _dt
     from io import BytesIO as _BIO
 
     # ── Palette (matches invoice exactly) ─────────────────────────────────────
@@ -2111,7 +2112,7 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     if dp.get("office_pincode"): city_line += f" - {dp['office_pincode']}"
     if city_line: addr_parts.append(city_line)
     copyright_txt = (dp.get("copyright_text") or
-                     f"(c) {now_ist().year} {biz_name}. All rights reserved.")
+                     f"(c) {_dt.now_ist().year} {biz_name}. All rights reserved.")
 
     # ── Customer info ─────────────────────────────────────────────────────────
     cust_name   = (getattr(customer, "name", None) or

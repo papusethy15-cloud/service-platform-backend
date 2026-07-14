@@ -284,3 +284,77 @@ async def list_attendance(
         "total": total,
         "pages": max(1, -(-total // per_page)),
     })
+
+
+# ── Admin: force checkout a specific attendance record ─────────────────────
+class AdminCheckoutRequest(BaseModel):
+    notes: Optional[str] = None
+
+@router.post("/{attendance_id}/force-checkout", summary="Admin force-checkout open attendance session")
+async def admin_force_checkout(
+    attendance_id: str,
+    payload: AdminCheckoutRequest,
+    current_user: dict = Depends(AdminOrCCO),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin can force-checkout an open attendance session and simultaneously
+    mark the technician as offline.
+    Used when a technician's session is stuck LIVE (e.g. app killed, no internet).
+    """
+    from app.models.attendance import Attendance
+    from app.models.technician import Technician
+
+    att = (await db.execute(
+        select(Attendance).where(Attendance.id == UUID(attendance_id))
+    )).scalar_one_or_none()
+
+    if not att:
+        raise HTTPException(404, "Attendance record not found")
+    if not att.check_in:
+        raise HTTPException(400, "No check-in on this record")
+    if att.check_out:
+        raise HTTPException(400, "Already checked out")
+
+    now = datetime.now(timezone.utc)
+    check_in_aware = att.check_in
+    if check_in_aware.tzinfo is None:
+        check_in_aware = check_in_aware.replace(tzinfo=timezone.utc)
+    elapsed = (now - check_in_aware).total_seconds()
+    att.accumulated_seconds = (att.accumulated_seconds or 0) + max(0, int(elapsed))
+    att.check_out = now
+    att.notes = (
+        (att.notes + " | " if att.notes else "")
+        + f"[Force-checked out by admin: {current_user.get('email', 'admin')}]"
+        + (f" Note: {payload.notes}" if payload.notes else "")
+    )
+
+    # Mark technician offline
+    tech = (await db.execute(
+        select(Technician).where(Technician.id == att.technician_id)
+    )).scalar_one_or_none()
+    if tech:
+        tech.is_online = False
+        tech.last_seen_at = None
+
+    await db.commit()
+
+    # Broadcast WS so admin dashboard reflects the change instantly
+    try:
+        from app.websocket.manager import publish_event, WSEvent, ADMIN_ASSIGNMENTS_ROOM
+        from app.core.background_tasks import track_task
+        track_task(publish_event(
+            ADMIN_ASSIGNMENTS_ROOM,
+            WSEvent.TECHNICIAN_STATUS_CHANGED,
+            {
+                "technician_id": str(att.technician_id),
+                "technician_name": tech.name if tech else None,
+                "is_online": False,
+                "reason": "admin_force_checkout",
+            },
+        ))
+    except Exception:
+        pass
+
+    return success_response(data=_fmt_att(att), message="Force-checkout successful. Technician is now offline.")
+

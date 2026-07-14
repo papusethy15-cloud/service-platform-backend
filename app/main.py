@@ -111,6 +111,8 @@ async def _auto_offline_stale_technicians():
     """
     Background task: runs every 2 minutes.
     Auto-offlines technicians whose last_seen_at > 10 minutes ago.
+    Also auto-checkouts any open attendance session for those technicians
+    (regardless of date) so stale LIVE sessions are properly closed.
     This handles phone-off, app-kill, no internet scenarios.
     """
     import asyncio
@@ -120,7 +122,8 @@ async def _auto_offline_stale_technicians():
             await asyncio.sleep(120)  # check every 2 minutes
             from app.core.database import AsyncSessionLocal
             from app.models.technician import Technician
-            from sqlalchemy import select, update
+            from app.models.attendance import Attendance
+            from sqlalchemy import select
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
@@ -137,6 +140,33 @@ async def _auto_offline_stale_technicians():
                     tech.last_seen_at = None
                     offline_ids.append((str(tech.id), tech.name))
                     print(f"[AUTO-OFFLINE] Technician {tech.name} ({tech.id}) auto-offlined after 10min inactivity")
+
+                    # ── Auto-checkout any open attendance session for this technician ──
+                    # Find open session (check_in set, check_out null) on ANY date.
+                    # This handles the case where the technician was never checked out
+                    # due to app-kill, network loss, or server restart.
+                    open_att = (await db.execute(
+                        select(Attendance).where(
+                            Attendance.technician_id == tech.id,
+                            Attendance.check_in != None,
+                            Attendance.check_out == None,
+                        )
+                    )).scalars().all()
+
+                    now_utc = datetime.now(timezone.utc)
+                    for att in open_att:
+                        check_in_aware = att.check_in
+                        if check_in_aware.tzinfo is None:
+                            check_in_aware = check_in_aware.replace(tzinfo=timezone.utc)
+                        elapsed = (now_utc - check_in_aware).total_seconds()
+                        att.accumulated_seconds = (att.accumulated_seconds or 0) + max(0, int(elapsed))
+                        att.check_out = now_utc
+                        att.notes = (att.notes or "") + " [Auto-checked out: technician went offline]"
+                        print(
+                            f"[AUTO-OFFLINE] Auto-checkout attendance id={att.id} "
+                            f"date={att.date} tech={tech.name} elapsed={elapsed:.0f}s"
+                        )
+
                 if stale:
                     await db.commit()
                     # Broadcast WS event so admin dashboard updates in real time

@@ -148,6 +148,29 @@ async def check_in(
 
     now = datetime.now(timezone.utc)
 
+    # ── Auto-close any open session from a PREVIOUS date ──────────────────
+    # This handles the case where the technician went offline (app-kill /
+    # network loss) on a previous day without a proper check-out.
+    # The auto-offline background task should have closed it, but as a
+    # belt-and-suspenders safety net we do it here too on every check-in.
+    prev_open = (await db.execute(
+        select(Attendance).where(
+            Attendance.technician_id == tech.id,
+            Attendance.check_in != None,
+            Attendance.check_out == None,
+            Attendance.date != today,  # Only previous-date open sessions
+        )
+    )).scalars().all()
+
+    for prev_att in prev_open:
+        check_in_aware = prev_att.check_in
+        if check_in_aware.tzinfo is None:
+            check_in_aware = check_in_aware.replace(tzinfo=timezone.utc)
+        elapsed = (now - check_in_aware).total_seconds()
+        prev_att.accumulated_seconds = (prev_att.accumulated_seconds or 0) + max(0, int(elapsed))
+        prev_att.check_out = now
+        prev_att.notes = (prev_att.notes or "") + " [Auto-checked out: new session started on different date]"
+
     if existing:
         if existing.check_in and not existing.check_out:
             # Already checked in this session, not yet checked out

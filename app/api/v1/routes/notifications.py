@@ -13,7 +13,6 @@ router = APIRouter()
 
 def _serialize(n) -> dict:
     """Serialize a Notification row to the API shape the app expects."""
-    # Derive notification_type from channel or data payload
     notif_type = "SYSTEM"
     if n.data and isinstance(n.data, dict):
         t = n.data.get("type", "")
@@ -129,7 +128,6 @@ async def admin_notification_log(
     notifs = (await db.execute(
         base_q.offset((page - 1) * per_page).limit(per_page)
     )).scalars().all()
-    # Resolve user info for each notification
     user_ids = list({n.user_id for n in notifs})
     users = {}
     if user_ids:
@@ -143,6 +141,8 @@ async def admin_notification_log(
             "recipient_name": u.name if u else None,
             "recipient_role": u.role.value if u and u.role else None,
             "recipient_mobile": u.mobile if u else None,
+            "sent_at": iso(n.created_at) if n.created_at else None,
+            "status": "SENT",
         })
     return success_response(data={
         "items": items,
@@ -162,23 +162,45 @@ class SendNotificationRequest(BaseModel):
     channel: str = "PUSH"
     data: Optional[dict] = None
 
-@router.post("/send", summary="Send notification [Admin/CCO]")
+@router.post("/send", summary="Send notification to a specific user [Admin/CCO]")
 async def send_notification(
     payload: SendNotificationRequest,
     current_user: dict = Depends(AdminOrCCO),
     db: AsyncSession = Depends(get_db),
 ):
     from app.models.notification import Notification
+    from app.models.user import User
+
+    # Save in-app notification record
     notif = Notification(
         user_id=UUID(payload.user_id),
         title=payload.title,
         body=payload.body,
         channel=payload.channel,
-        data=payload.data,
+        data=payload.data or {"type": "ADMIN_BROADCAST"},
     )
     db.add(notif)
     await db.commit()
-    return success_response(data={"id": str(notif.id)}, message="Notification sent")
+
+    # Send FCM push if channel is PUSH
+    push_sent = False
+    if payload.channel == "PUSH":
+        user = (await db.execute(
+            select(User).where(User.id == UUID(payload.user_id))
+        )).scalar_one_or_none()
+        if user and user.fcm_token:
+            from app.utils.fcm import send_simple_push
+            push_sent = await send_simple_push(
+                fcm_token=user.fcm_token,
+                title=payload.title,
+                body=payload.body,
+                data=payload.data or {"type": "ADMIN_BROADCAST"},
+            )
+
+    return success_response(
+        data={"id": str(notif.id), "push_sent": push_sent},
+        message="Notification sent" + (" with push" if push_sent else " (in-app only)"),
+    )
 
 
 # ── POST /notifications/bulk [Admin] ─────────────────────────────────────────
@@ -198,22 +220,60 @@ async def bulk_notification(
 ):
     from app.models.notification import Notification
     from app.models.user import User
+
     q = select(User).where(User.is_active == True)
     if payload.role:
         q = q.where(User.role == payload.role)
     elif payload.user_ids:
         q = q.where(User.id.in_([UUID(uid) for uid in payload.user_ids]))
     users = (await db.execute(q)).scalars().all()
+
+    notif_data = payload.data or {"type": "ADMIN_BROADCAST"}
+    push_sent = 0
+    push_failed = 0
+
     for user in users:
+        # Save in-app notification record for every user
         db.add(Notification(
             user_id=user.id,
             title=payload.title,
             body=payload.body,
             channel=payload.channel,
-            data=payload.data,
+            data=notif_data,
         ))
+
     await db.commit()
-    return success_response(data={"sent_to": len(users)}, message=f"Notification sent to {len(users)} users")
+
+    # Send FCM push to all users with tokens (after DB commit so records are safe)
+    if payload.channel == "PUSH":
+        from app.utils.fcm import send_simple_push
+        import asyncio
+        async def _push_one(user):
+            if user.fcm_token:
+                ok = await send_simple_push(
+                    fcm_token=user.fcm_token,
+                    title=payload.title,
+                    body=payload.body,
+                    data=notif_data,
+                )
+                return ok
+            return False
+
+        results = await asyncio.gather(*[_push_one(u) for u in users], return_exceptions=True)
+        for r in results:
+            if r is True:
+                push_sent += 1
+            else:
+                push_failed += 1
+
+    return success_response(
+        data={
+            "sent_to":    len(users),
+            "push_sent":  push_sent,
+            "push_failed": push_failed,
+        },
+        message=f"Notification sent to {len(users)} users ({push_sent} push delivered)",
+    )
 
 
 # ── GET /notifications/templates [Admin/CCO] ─────────────────────────────────

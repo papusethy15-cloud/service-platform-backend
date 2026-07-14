@@ -29,6 +29,7 @@ from app.models.domain import Domain, DomainProfile
 from app.models.invoice import Invoice, InvoiceStatus, InvoiceType
 from app.models.quotation import Quotation, QuotationStatus, QuotationServiceItem, QuotationPartItem
 from app.models.technician import Technician
+from app.models.payment import PaymentTransaction, PaymentMethod, PaymentStatus
 from app.utils.response import success_response
 
 router = APIRouter()
@@ -74,7 +75,7 @@ async def _ensure_access(db: AsyncSession, invoice: Invoice, current_user: dict)
         raise HTTPException(status_code=403, detail="Access denied")
 
 
-def _invoice_summary(invoice: Invoice, booking=None, customer_name: str = None, technician_name: str = None):
+def _invoice_summary(invoice: Invoice, booking=None, customer_name: str = None, technician_name: str = None, has_pay_later: bool = False):
     return {
         "id": str(invoice.id),
         "invoice_number": invoice.invoice_number,
@@ -104,6 +105,7 @@ def _invoice_summary(invoice: Invoice, booking=None, customer_name: str = None, 
         "customer_phone": booking.customer_phone if booking and hasattr(booking, "customer_phone") else None,
         "coupon_code": booking.coupon_code if booking and hasattr(booking, "coupon_code") else None,
         "coupon_discount": booking.coupon_discount if booking and hasattr(booking, "coupon_discount") else 0.0,
+        "has_pay_later": has_pay_later,
     }
 
 
@@ -327,6 +329,20 @@ async def list_invoices(
         .limit(per_page)
     )).all()
 
+    # Batch-fetch which invoice IDs have a PENDING PAY_LATER transaction
+    invoice_ids = [row[0].id for row in rows]
+    pay_later_ids: set = set()
+    if invoice_ids:
+        pay_later_rows = (await db.execute(
+            select(PaymentTransaction.invoice_id)
+            .where(
+                PaymentTransaction.invoice_id.in_(invoice_ids),
+                PaymentTransaction.method == PaymentMethod.PAY_LATER,
+                PaymentTransaction.status == PaymentStatus.PENDING,
+            )
+        )).scalars().all()
+        pay_later_ids = set(pay_later_rows)
+
     items = []
     for row in rows:
         inv, bk, cust, tech = row
@@ -335,7 +351,7 @@ async def list_invoices(
         if tech and tech.user_id:
             user_row = (await db.execute(select(User).where(User.id == tech.user_id))).scalar_one_or_none()
             tech_name = user_row.name if user_row else None
-        items.append(_invoice_summary(inv, bk, cust_name, tech_name))
+        items.append(_invoice_summary(inv, bk, cust_name, tech_name, has_pay_later=(inv.id in pay_later_ids)))
 
     return success_response(
         data={

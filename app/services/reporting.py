@@ -52,11 +52,11 @@ async def build_gst_report(
         month_bucket = monthly[month_key]
         for target in (bucket, month_bucket, totals):
             target["invoice_count"] += 1
-            target["taxable_amount"] = round(target["taxable_amount"] + invoice.taxable_amount, 2)
-            target["cgst_amount"] = round(target["cgst_amount"] + invoice.cgst_amount, 2)
-            target["sgst_amount"] = round(target["sgst_amount"] + invoice.sgst_amount, 2)
-            target["igst_amount"] = round(target["igst_amount"] + invoice.igst_amount, 2)
-            target["total_amount"] = round(target["total_amount"] + invoice.total_amount, 2)
+            target["taxable_amount"] = int(round(target["taxable_amount"] + invoice.taxable_amount))
+            target["cgst_amount"] = int(round(target["cgst_amount"] + invoice.cgst_amount))
+            target["sgst_amount"] = int(round(target["sgst_amount"] + invoice.sgst_amount))
+            target["igst_amount"] = int(round(target["igst_amount"] + invoice.igst_amount))
+            target["total_amount"] = int(round(target["total_amount"] + invoice.total_amount))
 
     b2c = summary_by_type.get(InvoiceType.GST_B2C.value, {})
     b2b = summary_by_type.get(InvoiceType.GST_B2B.value, {})
@@ -72,10 +72,10 @@ async def build_gst_report(
         "total_invoices": b2c.get("invoice_count", 0) + b2b.get("invoice_count", 0),
         "b2c_invoices": b2c.get("invoice_count", 0),
         "b2b_invoices": b2b.get("invoice_count", 0),
-        "total_taxable": round(b2c.get("taxable_amount", 0) + b2b.get("taxable_amount", 0), 2),
-        "total_cgst": round(b2c.get("cgst_amount", 0) + b2b.get("cgst_amount", 0), 2),
-        "total_sgst": round(b2c.get("sgst_amount", 0) + b2b.get("sgst_amount", 0), 2),
-        "total_igst": round(b2c.get("igst_amount", 0) + b2b.get("igst_amount", 0), 2),
+        "total_taxable": int(round(b2c.get("taxable_amount", 0) + b2b.get("taxable_amount", 0))),
+        "total_cgst": int(round(b2c.get("cgst_amount", 0) + b2b.get("cgst_amount", 0))),
+        "total_sgst": int(round(b2c.get("sgst_amount", 0) + b2b.get("sgst_amount", 0))),
+        "total_igst": int(round(b2c.get("igst_amount", 0) + b2b.get("igst_amount", 0))),
         "total_tax": round(
             b2c.get("cgst_amount", 0) + b2c.get("sgst_amount", 0) + b2c.get("igst_amount", 0) +
             b2b.get("cgst_amount", 0) + b2b.get("sgst_amount", 0) + b2b.get("igst_amount", 0),
@@ -87,12 +87,12 @@ async def build_gst_report(
                 "date": inv.created_at.isoformat() if inv.created_at else None,
                 "customer_name": None,  # joined separately if needed
                 "gstin": inv.gstin,
-                "taxable_amount": round(inv.taxable_amount or 0, 2),
-                "cgst": round(inv.cgst_amount or 0, 2),
-                "sgst": round(inv.sgst_amount or 0, 2),
-                "igst": round(inv.igst_amount or 0, 2),
-                "total_tax": round((inv.cgst_amount or 0) + (inv.sgst_amount or 0) + (inv.igst_amount or 0), 2),
-                "invoice_total": round(inv.total_amount or 0, 2),
+                "taxable_amount": int(round(inv.taxable_amount or 0)),
+                "cgst": int(round(inv.cgst_amount or 0)),
+                "sgst": int(round(inv.sgst_amount or 0)),
+                "igst": int(round(inv.igst_amount or 0)),
+                "total_tax": int(round((inv.cgst_amount or 0) + (inv.sgst_amount or 0) + (inv.igst_amount or 0))),
+                "invoice_total": int(round(inv.total_amount or 0)),
                 "type": inv.invoice_type.value if inv.invoice_type else "GST_B2C",
             }
             for inv in gst_invoices
@@ -138,16 +138,16 @@ async def build_revenue_report(
     daily = defaultdict(lambda: {"invoiced_amount": 0.0, "paid_amount": 0.0, "invoice_count": 0, "payment_count": 0})
     for invoice in invoices:
         day_key = invoice.created_at.date().isoformat()
-        daily[day_key]["invoiced_amount"] = round(daily[day_key]["invoiced_amount"] + invoice.total_amount, 2)
+        daily[day_key]["invoiced_amount"] = int(round(daily[day_key]["invoiced_amount"] + invoice.total_amount))
         daily[day_key]["invoice_count"] += 1
     for payment in payments:
         payment_dt = (payment.paid_at or payment.created_at).date().isoformat()
-        daily[payment_dt]["paid_amount"] = round(daily[payment_dt]["paid_amount"] + payment.amount, 2)
+        daily[payment_dt]["paid_amount"] = int(round(daily[payment_dt]["paid_amount"] + payment.amount))
         daily[payment_dt]["payment_count"] += 1
 
-    total_invoiced = round(sum(item.total_amount for item in invoices), 2)
-    total_paid = round(sum(item.amount for item in payments), 2)
-    total_outstanding = round(sum(item.balance_amount for item in invoices), 2)
+    total_invoiced = int(round(sum(item.total_amount for item in invoices)))
+    total_paid = int(round(sum(item.amount for item in payments)))
+    total_outstanding = int(round(sum(item.balance_amount for item in invoices)))
 
     return {
         "date_range": {"start_date": resolved_start.isoformat(), "end_date": resolved_end.isoformat()},
@@ -164,7 +164,7 @@ async def build_revenue_report(
         "total_revenue": total_paid,
         "total_bookings": len(bookings),
         "completed_bookings": sum(1 for b in bookings if getattr(b, "status", "") in ("COMPLETED", "CLOSED", "SETTLED")),
-        "average_booking_value": round(total_paid / len(bookings), 2) if bookings else 0.0,
+        "average_booking_value": int(round(total_paid / len(bookings))) if bookings else 0.0,
         "breakdown": [{"date": key, "revenue": v["paid_amount"], "bookings": v["payment_count"], "avg_value": round(v["paid_amount"] / v["payment_count"], 2) if v["payment_count"] else 0} for key, v in sorted(daily.items())],
     }
 
@@ -226,10 +226,10 @@ async def build_customer_report(
             aggregates[booking.customer_id]["booking_count"] += 1
     for invoice, customer_id in invoices:
         if customer_id in aggregates:
-            aggregates[customer_id]["invoice_amount"] = round(aggregates[customer_id]["invoice_amount"] + invoice.total_amount, 2)
+            aggregates[customer_id]["invoice_amount"] = int(round(aggregates[customer_id]["invoice_amount"] + invoice.total_amount))
     for payment, customer_id in payments:
         if customer_id in aggregates:
-            aggregates[customer_id]["paid_amount"] = round(aggregates[customer_id]["paid_amount"] + payment.amount, 2)
+            aggregates[customer_id]["paid_amount"] = int(round(aggregates[customer_id]["paid_amount"] + payment.amount))
 
     ranked = sorted(
         aggregates.values(),

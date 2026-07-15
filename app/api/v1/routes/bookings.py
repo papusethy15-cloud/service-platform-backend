@@ -600,7 +600,7 @@ async def create_booking(
         domain_id=UUID(payload.domain_id) if payload.domain_id else None,
         base_amount=base_price,
         discount_amount=coupon_discount,
-        gst_amount=round((service.gst_percent / 100.0) * final_total, 2) if service and service.gst_percent else 0.0,
+        gst_amount=round((service.gst_percent / 100.0) * final_total) if service and service.gst_percent else 0,
         total_amount=final_total,
         coupon_id=coupon_id,
         coupon_code=coupon_code,
@@ -1505,8 +1505,8 @@ async def initiate_visiting_charge(
         return f"INV{suffix}"
 
     # ── Create visiting-charge quotation (pre-approved) ───────────────────────
-    tax_amount = round(amount * 0.18, 2)
-    total = round(amount + tax_amount, 2)
+    tax_amount = round(amount * 0.18)
+    total = round(amount + tax_amount)
 
     quotation = QuotationModel(
         quotation_number=_qnum(),
@@ -1555,8 +1555,8 @@ async def initiate_visiting_charge(
         invoice_type=InvoiceType.GST_B2C,
         status=InvoiceStatus.GENERATED,
         taxable_amount=amount,
-        cgst_amount=round(tax_amount / 2, 2),
-        sgst_amount=round(tax_amount / 2, 2),
+        cgst_amount=round(tax_amount / 2),
+        sgst_amount=round(tax_amount / 2),
         igst_amount=0.0,
         total_amount=total,
         balance_amount=total,
@@ -2012,9 +2012,9 @@ async def commission_preview(
             matched_rule = next((r for r in group_service_rules if str(r.service_id) == str(si.service_id)), None)
             if matched_rule:
                 if matched_rule.commission_type == "PERCENTAGE":
-                    comm = round(si.total_price * matched_rule.rate / 100, 2)
+                    comm = int(round(si.total_price * matched_rule.rate / 100))
                 else:
-                    comm = round(matched_rule.rate * si.quantity, 2)
+                    comm = int(round(matched_rule.rate * si.quantity))
                 match_status = "group"
             else:
                 comm = None
@@ -2051,15 +2051,15 @@ async def commission_preview(
                     purchase_unit = pi.purchase_price or 0
                     profit = pi.unit_price - purchase_unit
                     profit_total = max(profit, 0) * pi.quantity
-                    comm = round(profit_total * matched_rule.rate / 100, 2)
+                    comm = int(round(profit_total * matched_rule.rate / 100))
                 else:  # FLAT
-                    comm = round(matched_rule.rate * pi.quantity, 2)
+                    comm = int(round(matched_rule.rate * pi.quantity))
                 match_status = "group"
             else:
                 comm = None
                 match_status = "unmatched"
             # For MARKET_PURCHASE: technician also gets purchase cost back (separate reimbursement)
-            reimb = round(purchase_cost, 2) if src == "MARKET_PURCHASE" else 0.0
+            reimb = int(round(purchase_cost)) if src == "MARKET_PURCHASE" else 0
             line_items.append({
                 "type": "PART",
                 "quotation_number": q.quotation_number,
@@ -2085,9 +2085,9 @@ async def commission_preview(
         "technician": {"id": str(tech.id), "name": tech.name, "user_id": str(tech.user_id)} if tech else None,
         "commission_group": {"id": str(group.id), "name": group.name} if group else None,
         "line_items": line_items,
-        "total_commission": round(total_commission, 2),
-        "total_reimbursement": round(total_reimbursement, 2),
-        "total_payout": round(total_commission + total_reimbursement, 2),
+        "total_commission": int(round(total_commission)),
+        "total_reimbursement": int(round(total_reimbursement)),
+        "total_payout": int(round(total_commission + total_reimbursement)),
     })
 
 
@@ -2189,7 +2189,7 @@ async def settle_booking(
         for si in svc_items:
             matched = next((r for r in group_service_rules if str(r.service_id) == str(si.service_id)), None)
             if matched:
-                comm = round(si.total_price * matched.rate / 100, 2) if matched.commission_type == "PERCENTAGE" else round(matched.rate * si.quantity, 2)
+                comm = int(round(si.total_price * matched.rate / 100)) if matched.commission_type == "PERCENTAGE" else int(round(matched.rate * si.quantity))
             else:
                 comm = None
             line_items.append({"type": "SERVICE", "name": si.service_name, "quantity": si.quantity,
@@ -2211,13 +2211,13 @@ async def settle_booking(
                     purchase_unit = pi.purchase_price or 0
                     profit = pi.unit_price - purchase_unit
                     profit_total = max(profit, 0) * pi.quantity
-                    comm = round(profit_total * matched.rate / 100, 2)
+                    comm = int(round(profit_total * matched.rate / 100))
                 else:  # FLAT
-                    comm = round(matched.rate * pi.quantity, 2)
+                    comm = int(round(matched.rate * pi.quantity))
             else:
                 comm = None
             # MARKET_PURCHASE: reimbursement = purchase cost technician paid from own pocket
-            reimb = round(purchase_cost, 2) if src == "MARKET_PURCHASE" else 0.0
+            reimb = int(round(purchase_cost)) if src == "MARKET_PURCHASE" else 0
             line_items.append({"type": "PART", "name": pi.part_name, "quantity": pi.quantity,
                                 "unit_price": pi.unit_price, "purchase_price": pi.purchase_price,
                                 "total_price": pi.total_price, "part_source": src,

@@ -138,7 +138,7 @@ async def _recalculate_quotation(db: AsyncSession, quotation: Quotation):
                 raw_disc = coupon_rec.discount_value
             if coupon_rec.max_discount_amount:
                 raw_disc = min(raw_disc, coupon_rec.max_discount_amount)
-            coupon_disc = round(raw_disc, 2)
+            coupon_disc = round(raw_disc)
         quotation.coupon_discount = coupon_disc
     else:
         coupon_disc = getattr(quotation, "coupon_discount", 0.0) or 0.0
@@ -151,8 +151,8 @@ async def _recalculate_quotation(db: AsyncSession, quotation: Quotation):
         quotation.tax_amount = 0.0
         quotation.tax_percent = 0.0
     else:
-        quotation.tax_amount = round(taxable_amount * (quotation.tax_percent / 100.0), 2)
-    quotation.total_amount = round(taxable_amount + quotation.tax_amount, 2)
+        quotation.tax_amount = round(taxable_amount * (quotation.tax_percent / 100.0))
+    quotation.total_amount = round(taxable_amount + quotation.tax_amount)
 
 
 def _quotation_summary(quotation: Quotation, booking_number: str | None = None):
@@ -876,7 +876,7 @@ async def add_service_to_quotation(
             service_name=encoded_name,
             quantity=payload.quantity,
             unit_price=unit_price,
-            total_price=round(unit_price * payload.quantity, 2),
+            total_price=round(unit_price * payload.quantity),
             appliance_label=payload.appliance_label,
             is_pending_verify=0,
         )
@@ -929,7 +929,7 @@ async def add_service_to_quotation(
         service_name=encoded_name,
         quantity=payload.quantity,
         unit_price=unit_price,
-        total_price=round(unit_price * payload.quantity, 2),
+        total_price=round(unit_price * payload.quantity),
         appliance_label=payload.appliance_label,
         is_pending_verify=1,            # pending admin verify
         custom_service_name=custom_name,
@@ -1164,7 +1164,7 @@ async def add_part_to_quotation(
         quantity=payload.quantity,
         unit_price=payload.unit_price,
         purchase_price=payload.purchase_price or 0,
-        total_price=round(payload.quantity * payload.unit_price, 2),
+        total_price=round(payload.quantity * payload.unit_price),
         vendor_name=payload.vendor_name,
         bill_number=payload.bill_number,
         notes=notes_str or None,
@@ -1204,7 +1204,7 @@ async def update_part_in_quotation(
         else:
             setattr(part, field, value)
     if payload.quantity is not None or payload.unit_price is not None:
-        part.total_price = round(part.quantity * part.unit_price, 2)
+        part.total_price = round(part.quantity * part.unit_price)
     await _recalculate_quotation(db, quotation)
     await db.commit()
     _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])
@@ -1416,7 +1416,7 @@ async def update_service_in_quotation(
         item.unit_price = payload.unit_price
     if payload.quantity is not None:
         item.quantity = payload.quantity
-    item.total_price = round(item.unit_price * item.quantity, 2)
+    item.total_price = round(item.unit_price * item.quantity)
     await _recalculate_quotation(db, quotation)
     await db.commit()
     _broadcast_quotation(quotation, WSEvent.QUOTATION_UPDATED, current_user["user_id"])

@@ -605,7 +605,7 @@ async def captain_earnings(
     comm_row = comm_result.one()
     pending_commission  = float(comm_row.pending  or 0)
     approved_commission = float(comm_row.approved or 0)
-    commission_on_hold  = round(pending_commission + approved_commission, 2)
+    commission_on_hold  = int(round(pending_commission + approved_commission))
 
     # ── Pending withdrawal requests (submitted but not yet approved/rejected) ──
     # These amounts are still IN wallet.balance but logically already "spoken for".
@@ -628,14 +628,14 @@ async def captain_earnings(
     return success_response(data={
         "balance":                  raw_balance,
         "withdrawable_balance":     withdrawable_balance,        # what technician can actually request
-        "pending_withdrawal_amount": round(pending_withdrawal_amount, 2),  # already-submitted, not yet processed
+        "pending_withdrawal_amount": int(round(pending_withdrawal_amount)),  # already-submitted, not yet processed
         "has_pending_withdrawal":   has_pending_withdrawal,
         "today_earnings":           today_credit,
         "total_jobs":               tech.total_jobs,
         "rating":                   tech.rating,
         "commission_on_hold":       commission_on_hold,   # settled but not yet paid into wallet
-        "pending_commission":       round(pending_commission,  2),
-        "approved_commission":      round(approved_commission, 2),
+        "pending_commission":       int(round(pending_commission)),
+        "approved_commission":      int(round(approved_commission)),
     })
 
 
@@ -717,15 +717,15 @@ async def captain_booking_commission(
         "id": str(c.id),
         "item_type": c.item_type,
         "item_name": c.item_name,
-        "base_amount": round(c.base_amount or 0, 2),
-        "commission_amount": round(c.commission_amount or 0, 2),
+        "base_amount": int(round(c.base_amount or 0)),
+        "commission_amount": int(round(c.commission_amount or 0)),
         "status": c.status,
         "payout_date": iso(c.payout_date) if c.payout_date else None,
         "notes": c.notes,
     } for c in rows]
 
-    total_commission = round(sum(c.commission_amount or 0 for c in rows), 2)
-    paid_commission  = round(sum(c.commission_amount or 0 for c in rows if c.status == "PAID"), 2)
+    total_commission = int(round(sum(c.commission_amount or 0 for c in rows)))
+    paid_commission  = int(round(sum(c.commission_amount or 0 for c in rows if c.status == "PAID")))
     is_settled       = bool(rows) and all(c.status == "PAID" for c in rows)
 
     return success_response(data={
@@ -980,9 +980,9 @@ async def captain_my_commissions(
     all_rows = (await db.execute(
         select(Commission).where(Commission.technician_id == tech.id)
     )).scalars().all()
-    total_pending  = round(sum(r.commission_amount or 0 for r in all_rows if r.status == "PENDING"),  2)
-    total_approved = round(sum(r.commission_amount or 0 for r in all_rows if r.status == "APPROVED"), 2)
-    total_paid     = round(sum(r.commission_amount or 0 for r in all_rows if r.status == "PAID"),     2)
+    total_pending  = int(round(sum(r.commission_amount or 0 for r in all_rows if r.status == "PENDING")))
+    total_approved = int(round(sum(r.commission_amount or 0 for r in all_rows if r.status == "APPROVED")))
+    total_paid     = int(round(sum(r.commission_amount or 0 for r in all_rows if r.status == "PAID")))
     count_pending  = sum(1 for r in all_rows if r.status == "PENDING")
     count_approved = sum(1 for r in all_rows if r.status == "APPROVED")
     count_paid     = sum(1 for r in all_rows if r.status == "PAID")
@@ -1006,8 +1006,8 @@ async def captain_my_commissions(
             "item_name":         comm.item_name,
             "item_quantity":     comm.item_quantity,
             "part_source":       comm.part_source,     # OFFICE_STOCK | MARKET_PURCHASE | None
-            "base_amount":       round(comm.base_amount or 0, 2),
-            "commission_amount": round(comm.commission_amount or 0, 2),
+            "base_amount":       int(round(comm.base_amount or 0)),
+            "commission_amount": int(round(comm.commission_amount or 0)),
             "status":            comm.status,           # PENDING | APPROVED | PAID
             "payout_date":       iso(comm.payout_date) if comm.payout_date else None,
             "notes":             comm.notes,
@@ -1022,7 +1022,7 @@ async def captain_my_commissions(
             "count_pending":   count_pending,
             "count_approved":  count_approved,
             "count_paid":      count_paid,
-            "total_lifetime":  round(total_pending + total_approved + total_paid, 2),
+            "total_lifetime":  int(round(total_pending + total_approved + total_paid)),
         },
         "items":    items,
         "total":    total_count,

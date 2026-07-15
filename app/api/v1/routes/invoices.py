@@ -91,7 +91,7 @@ def _invoice_summary(invoice: Invoice, booking=None, customer_name: str = None, 
         "cgst_amount": invoice.cgst_amount or 0,
         "sgst_amount": invoice.sgst_amount or 0,
         "igst_amount": invoice.igst_amount or 0,
-        "gst_amount": round((invoice.cgst_amount or 0) + (invoice.sgst_amount or 0) + (invoice.igst_amount or 0), 2),
+        "gst_amount": int(round((invoice.cgst_amount or 0) + (invoice.sgst_amount or 0) + (invoice.igst_amount or 0))),
         "total_amount": invoice.total_amount or 0,
         "balance_amount": invoice.balance_amount or 0,
         "notes": invoice.notes,
@@ -165,10 +165,10 @@ async def create_invoice(
         business_address = payload.business_address or quotation.customer_gst_address
         gstin = payload.gstin or quotation.customer_gst_number
 
-    taxable_amount = round(quotation.subtotal_amount - quotation.discount_amount + quotation.adjustment_amount, 2)
+    taxable_amount = round(quotation.subtotal_amount - quotation.discount_amount + quotation.adjustment_amount)
     total_tax = quotation.tax_amount if invoice_type != InvoiceType.NON_GST else 0.0
-    cgst_amount = round(total_tax / 2, 2) if invoice_type != InvoiceType.NON_GST else 0.0
-    sgst_amount = round(total_tax / 2, 2) if invoice_type != InvoiceType.NON_GST else 0.0
+    cgst_amount = round(total_tax / 2) if invoice_type != InvoiceType.NON_GST else 0
+    sgst_amount = round(total_tax / 2) if invoice_type != InvoiceType.NON_GST else 0
     igst_amount = 0.0
 
     if invoice_type == InvoiceType.GST_B2B and not (gstin and business_name and business_address):
@@ -197,8 +197,8 @@ async def create_invoice(
         cgst_amount=cgst_amount,
         sgst_amount=sgst_amount,
         igst_amount=igst_amount,
-        total_amount=round(taxable_amount + total_tax, 2),
-        balance_amount=round(taxable_amount + total_tax, 2),
+        total_amount=round(taxable_amount + total_tax),
+        balance_amount=round(taxable_amount + total_tax),
         notes=payload.notes,
     )
     db.add(invoice)
@@ -390,8 +390,8 @@ async def get_invoice(
             services.append({
                 "service_name": s.service_name,
                 "quantity": s.quantity or 1,
-                "unit_price": round(s.unit_price or 0, 2),
-                "total_price": round(s.total_price or 0, 2),
+                "unit_price": int(round(s.unit_price or 0)),
+                "total_price": int(round(s.total_price or 0)),
                 "appliance_label": s.appliance_label,
             })
             services_total += s.total_price or 0
@@ -407,8 +407,8 @@ async def get_invoice(
                 "part_name": p.part_name,
                 "part_source": p.part_source.value if p.part_source else "OFFICE_STOCK",
                 "quantity": p.quantity or 1,
-                "unit_price": round(p.unit_price or 0, 2),
-                "total_price": round(p.total_price or 0, 2),
+                "unit_price": int(round(p.unit_price or 0)),
+                "total_price": int(round(p.total_price or 0)),
                 "vendor_name": p.vendor_name,
                 "notes": p.notes,
             })
@@ -417,10 +417,10 @@ async def get_invoice(
     data = _invoice_summary(invoice)
     data["services"] = services
     data["parts"] = parts
-    data["services_total"] = round(services_total, 2)
-    data["parts_total"] = round(parts_total, 2)
-    data["subtotal_amount"] = round(invoice.taxable_amount or 0, 2)
-    data["tax_amount"] = round((invoice.cgst_amount or 0) + (invoice.sgst_amount or 0) + (invoice.igst_amount or 0), 2)
+    data["services_total"] = int(round(services_total))
+    data["parts_total"] = int(round(parts_total))
+    data["subtotal_amount"] = int(round(invoice.taxable_amount or 0))
+    data["tax_amount"] = int(round((invoice.cgst_amount or 0) + (invoice.sgst_amount or 0) + (invoice.igst_amount or 0)))
     data["tax_percent"] = 18  # standard GST; refine if needed
 
     return success_response(data=data)
@@ -1045,7 +1045,7 @@ async def get_invoice_pdf(
         )).scalars().all()
         services = [{
             "service_name": s.service_name, "quantity": s.quantity or 1,
-            "unit_price": round(s.unit_price or 0, 2), "total_price": round(s.total_price or 0, 2),
+            "unit_price": int(round(s.unit_price or 0)), "total_price": int(round(s.total_price or 0)),
             "appliance_label": s.appliance_label,
         } for s in service_rows]
 
@@ -1057,7 +1057,7 @@ async def get_invoice_pdf(
         )).scalars().all()
         parts = [{
             "part_name": p.part_name, "quantity": p.quantity or 1,
-            "unit_price": round(p.unit_price or 0, 2), "total_price": round(p.total_price or 0, 2),
+            "unit_price": int(round(p.unit_price or 0)), "total_price": int(round(p.total_price or 0)),
         } for p in part_rows]
 
     # Load CustomerAddress for full address in PDF (address_line1, address_line2, city, state, pincode)

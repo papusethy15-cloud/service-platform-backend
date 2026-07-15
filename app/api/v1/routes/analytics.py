@@ -125,7 +125,7 @@ async def dashboard_kpis(
             .group_by(func.date(Booking.created_at))
             .order_by(func.date(Booking.created_at))
         )).all()
-        revenue_chart = [{"date": str(r.d), "revenue": round(float(r.rev), 2), "bookings": r.cnt} for r in rows]
+        revenue_chart = [{"date": str(r.d), "revenue": int(round(float(r.rev))), "bookings": r.cnt} for r in rows]
     except Exception:
         revenue_chart = []
 
@@ -313,11 +313,11 @@ async def dashboard_kpis(
             "completion_rate": completion_rate,
         },
         "revenue": {
-            "total": round(total_revenue, 2),
-            "this_month": round(month_revenue, 2),
-            "this_week": round(week_revenue, 2),
-            "today": round(today_revenue, 2),
-            "prev_month": round(prev_month_rev, 2),
+            "total": int(round(total_revenue)),
+            "this_month": int(round(month_revenue)),
+            "this_week": int(round(week_revenue)),
+            "today": int(round(today_revenue)),
+            "prev_month": int(round(prev_month_rev)),
             "month_growth": month_growth,
         },
         "customers": {
@@ -361,7 +361,7 @@ async def revenue_analytics(
             .order_by(func.date(Booking.created_at))
         )
         rows = result.all()
-        data = [{"date": str(r.date), "revenue": round(float(r.revenue), 2), "bookings": r.count} for r in rows]
+        data = [{"date": str(r.date), "revenue": int(round(float(r.revenue))), "bookings": r.count} for r in rows]
     except Exception:
         data = []
     return success_response(data={"period": period, "data": data})

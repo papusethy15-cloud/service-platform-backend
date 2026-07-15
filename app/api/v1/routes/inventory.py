@@ -28,7 +28,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from app.core.database import get_db
-from app.api.deps import AdminOnly, AnyStaff, AnyAuthenticated
+from app.api.deps import AdminOnly, AdminCCOTech, AnyStaff, AnyAuthenticated
 from app.utils.response import success_response, iso
 
 router = APIRouter()
@@ -539,7 +539,7 @@ async def warehouse_stock(
 # ITEMS — CRUD
 # ══════════════════════════════════════════════════════════════════════════════
 
-@router.get("", summary="List inventory items [Staff]")
+@router.get("", summary="List inventory items [Staff + Technician]")
 async def list_items(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, le=100),
@@ -547,7 +547,7 @@ async def list_items(
     category_id: Optional[str] = None,   # filter by service_category id
     low_stock: bool = Query(False),
     is_consumable: Optional[bool] = None,
-    current_user: dict = Depends(AnyStaff),
+    current_user: dict = Depends(AdminCCOTech),  # Technicians need this for parts search in quotations
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.inventory import InventoryItem

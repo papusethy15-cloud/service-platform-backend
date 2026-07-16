@@ -355,18 +355,27 @@ class ReorderRuleRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class VerifyMarketPurchaseRequest(BaseModel):
-    action: str                          # "add_new" | "override_price" | "reject"
-    # For add_new: create brand-new inventory item
-    # For override_price: update cost_price (and optionally selling_price) on existing item
-    override_cost_price: Optional[float] = None
-    override_selling_price: Optional[float] = None
-    # For add_new only
+    action: str  # "add_new" | "link_and_update" | "reject"
+    # ── For add_new: full item creation fields ──
     new_item_name: Optional[str] = None
     new_cost_price: Optional[float] = None
     new_selling_price: Optional[float] = None
-    category_id: Optional[str] = None
+    category_ids: Optional[List[str]] = None   # many-to-many service_categories
     sku: Optional[str] = None
+    barcode: Optional[str] = None
+    brand_id: Optional[str] = None
+    unit: Optional[str] = "pcs"
+    description: Optional[str] = None
+    hsn_code: Optional[str] = None
+    gst_percent: Optional[float] = 18.0
+    mrp: Optional[float] = None
+    is_consumable: Optional[bool] = False
+    is_serialised: Optional[bool] = False
     notes: Optional[str] = None
+    # ── For link_and_update: search & pick existing item then update prices ──
+    inventory_item_id: Optional[str] = None    # UUID of existing item to update
+    override_cost_price: Optional[float] = None
+    override_selling_price: Optional[float] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1192,19 +1201,31 @@ async def verify_market_purchase(
     action = payload.action.strip().lower()
 
     if action == "add_new":
-        # Create a new active inventory item from tech's data
+        # Create a new active inventory item from tech's data — full fields like create_item
         new_name = (payload.new_item_name or part.part_name).strip()
         new_item = InventoryItem(
             name=new_name,
             cost_price=payload.new_cost_price if payload.new_cost_price is not None else (part.purchase_price or 0),
             selling_price=payload.new_selling_price if payload.new_selling_price is not None else (part.unit_price or 0),
+            mrp=payload.mrp or 0.0,
             current_stock=0,
             is_active=True,
-            category_id=UUID(payload.category_id) if payload.category_id else None,
             sku=payload.sku or None,
+            barcode=payload.barcode or None,
+            unit=payload.unit or "pcs",
+            description=payload.description or None,
+            hsn_code=payload.hsn_code or None,
+            gst_percent=payload.gst_percent if payload.gst_percent is not None else 18.0,
+            is_consumable=payload.is_consumable or False,
+            is_serialised=payload.is_serialised or False,
         )
+        if payload.brand_id:
+            new_item.brand_id = UUID(payload.brand_id)
         db.add(new_item)
-        await db.flush()
+        await db.flush()  # get new_item.id
+        # Sync many-to-many categories (service_categories)
+        cat_ids = payload.category_ids or []
+        await _sync_item_categories(new_item.id, cat_ids, db)
         part.inventory_item_id = new_item.id
         part.is_pending_verify = 2  # verified
         await db.commit()
@@ -1213,29 +1234,34 @@ async def verify_market_purchase(
             message=f"New item '{new_item.name}' added to inventory catalogue"
         )
 
-    elif action == "override_price":
-        # Update existing linked item's prices
-        if not part.inventory_item_id:
-            raise HTTPException(status_code=400, detail="No linked inventory item to update price on")
+    elif action == "link_and_update":
+        # Admin searches and picks an existing inventory item, then updates its prices
+        item_id_str = payload.inventory_item_id
+        if not item_id_str:
+            raise HTTPException(status_code=400, detail="inventory_item_id is required for link_and_update")
+        try:
+            item_uuid = UUID(item_id_str)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid inventory_item_id UUID")
         inv_item = (await db.execute(
-            select(InventoryItem).where(InventoryItem.id == part.inventory_item_id)
+            select(InventoryItem).where(InventoryItem.id == item_uuid)
         )).scalar_one_or_none()
         if not inv_item:
-            raise HTTPException(status_code=404, detail="Linked inventory item not found")
-
+            raise HTTPException(status_code=404, detail="Selected inventory item not found")
         if payload.override_cost_price is not None:
             inv_item.cost_price = payload.override_cost_price
         if payload.override_selling_price is not None:
             inv_item.selling_price = payload.override_selling_price
         if not inv_item.is_active:
-            inv_item.is_active = True  # activate if it was pending
-
+            inv_item.is_active = True
+        # Link this market-purchase part to the selected inventory item
+        part.inventory_item_id = inv_item.id
         part.is_pending_verify = 2  # verified
         await db.commit()
         return success_response(
             data={"inventory_item_id": str(inv_item.id), "name": inv_item.name,
                   "new_cost_price": inv_item.cost_price, "new_selling_price": inv_item.selling_price},
-            message=f"Price updated for '{inv_item.name}'"
+            message=f"Price updated and linked to '{inv_item.name}'"
         )
 
     elif action == "reject":
@@ -1244,7 +1270,38 @@ async def verify_market_purchase(
         return success_response(message="Market purchase part rejected — no catalogue change made")
 
     else:
-        raise HTTPException(status_code=400, detail="action must be 'add_new', 'override_price', or 'reject'")
+        raise HTTPException(status_code=400, detail="action must be 'add_new', 'link_and_update', or 'reject'")
+
+
+@router.delete("/movements/{movement_id}", summary="Delete a stock movement (admin correction) [Admin]")
+async def delete_stock_movement(
+    movement_id: UUID,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a specific stock movement record (for correcting wrong entries
+    e.g. erroneously added stock from a failed market purchase verify action).
+    Also reverses the inventory_item current_stock if the movement was a stock-add type.
+    """
+    from app.models.inventory import StockMovement, InventoryItem
+    movement = (await db.execute(
+        select(StockMovement).where(StockMovement.id == movement_id)
+    )).scalar_one_or_none()
+    if not movement:
+        raise HTTPException(status_code=404, detail="Movement not found")
+
+    # Reverse the stock impact — subtract what was added
+    if movement.item_id and movement.quantity:
+        inv_item = (await db.execute(
+            select(InventoryItem).where(InventoryItem.id == movement.item_id)
+        )).scalar_one_or_none()
+        if inv_item:
+            inv_item.current_stock = max(0, (inv_item.current_stock or 0) - (movement.quantity or 0))
+
+    await db.delete(movement)
+    await db.commit()
+    return success_response(message="Stock movement deleted and inventory corrected")
 
 
 @router.get("/{item_id}", summary="Item detail [Staff]")

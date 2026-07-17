@@ -106,6 +106,9 @@ def _invoice_summary(invoice: Invoice, booking=None, customer_name: str = None, 
         "coupon_code": booking.coupon_code if booking and hasattr(booking, "coupon_code") else None,
         "coupon_discount": booking.coupon_discount if booking and hasattr(booking, "coupon_discount") else 0.0,
         "has_pay_later": has_pay_later,
+        # Aliases expected by the website InvoiceCard component
+        "payment_status": invoice.status.value if invoice.status else "GENERATED",
+        "balance_due": invoice.balance_amount or 0,
     }
 
 

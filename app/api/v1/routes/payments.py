@@ -212,6 +212,37 @@ async def create_order(
         raise HTTPException(status_code=502, detail=f"Could not create Razorpay order: {e}")
 
     order_id = rp_order["id"]
+
+    # ── Idempotency: cancel any pre-existing PENDING RAZORPAY transactions
+    # for the same invoice (customer opened payment sheet twice) — we are
+    # about to create a fresh one with the new order_id.
+    stale_razorpay = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.invoice_id == invoice.id,
+            PaymentTransaction.method    == PaymentMethod.RAZORPAY,
+            PaymentTransaction.status    == PaymentStatus.PENDING,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalars().all()
+    for stale in stale_razorpay:
+        stale.status    = PaymentStatus.CANCELLED
+        stale.notes     = ((stale.notes or '') + ' [Auto-cancelled: new Razorpay order created]')[:1000]
+
+    # ── Auto-void PAY_LATER PENDING: customer is now paying online, so the
+    # technician's "collect later" schedule is no longer needed.
+    stale_pay_later = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.invoice_id == invoice.id,
+            PaymentTransaction.method    == PaymentMethod.PAY_LATER,
+            PaymentTransaction.status    == PaymentStatus.PENDING,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalars().all()
+    for stale in stale_pay_later:
+        stale.status    = PaymentStatus.CANCELLED
+        stale.notes     = ((stale.notes or '') + ' [Auto-voided: customer paying online via Razorpay]')[:1000]
+        stale.is_active = False
+
     transaction = PaymentTransaction(
         transaction_number=generate_transaction_number(),
         invoice_id=invoice.id,
@@ -280,6 +311,38 @@ async def verify_payment(
         transaction.amount = payload.amount
     if payload.notes:
         transaction.notes = payload.notes
+
+    # ── Auto-void any remaining PAY_LATER PENDING on this invoice ────────────
+    # The customer just paid online; any technician-scheduled "collect later"
+    # reminder is now obsolete. Cancel them so they disappear from the captain
+    # app Pay Later screen and the CCO dashboard.
+    stale_pay_later = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.invoice_id == invoice.id,
+            PaymentTransaction.method    == PaymentMethod.PAY_LATER,
+            PaymentTransaction.status    == PaymentStatus.PENDING,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalars().all()
+    for stale in stale_pay_later:
+        stale.status    = PaymentStatus.CANCELLED
+        stale.notes     = ((stale.notes or '') + ' [Auto-voided: customer paid online via Razorpay]')[:1000]
+        stale.is_active = False
+
+    # ── Also cancel any other stale PENDING RAZORPAY transactions (duplicates) ─
+    stale_razorpay = (await db.execute(
+        select(PaymentTransaction).where(
+            PaymentTransaction.invoice_id == invoice.id,
+            PaymentTransaction.method    == PaymentMethod.RAZORPAY,
+            PaymentTransaction.status    == PaymentStatus.PENDING,
+            PaymentTransaction.id        != transaction.id,
+            PaymentTransaction.is_active == True,
+        )
+    )).scalars().all()
+    for stale in stale_razorpay:
+        stale.status = PaymentStatus.CANCELLED
+        stale.notes  = ((stale.notes or '') + ' [Auto-cancelled: payment verified on another transaction]')[:1000]
+
     await _apply_invoice_payment_state(db, invoice)
     await db.commit()
     return success_response(data=_payment_summary(transaction), message="Payment verified successfully")

@@ -196,6 +196,12 @@ async def create_technician(
             identity_type=payload.identity_type,
             identity_number=payload.identity_number,
             technician_code=generate_tech_code(),
+            # Payout / payment details
+            payout_upi_id=payload.payout_upi_id,
+            payout_bank_account=payload.payout_bank_account,
+            payout_bank_ifsc=payload.payout_bank_ifsc,
+            payout_bank_name=payload.payout_bank_name,
+            payout_account_holder=payload.payout_account_holder,
         )
         db.add(tech)
         await db.flush()

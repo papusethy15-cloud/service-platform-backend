@@ -230,6 +230,166 @@ async def list_salary_technicians(
     return success_response(data={"technicians": results, "total": len(results)})
 
 
+
+@router.get("/preview", summary="Preview technician data before generating salary [Admin]")
+async def preview_technician_data(
+    technician_id: str,
+    month: int = Query(..., ge=1, le=12),
+    year: int  = Query(...),
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns bookings, attendance, cash collections, and revenue for the given
+    technician + month/year. Used to review data before generating salary.
+    """
+    from app.models.technician import Technician
+    from app.models.commission import CommissionGroup, CommissionGroupAssignment
+    from app.models.booking import Booking
+    from app.models.attendance import Attendance
+    from app.models.payment import PaymentTransaction, CashCollectionRecord
+    from app.utils.timezone import ist_midnight_utc, ist_end_of_day_utc
+    from datetime import date
+
+    tid = UUID(technician_id)
+    tech, group = await _get_salary_tech(tid, db)
+
+    sd = date(year, month, 1)
+    ed = date(year, month, calendar.monthrange(year, month)[1])
+    start_dt = ist_midnight_utc(sd)
+    end_dt   = ist_end_of_day_utc(ed)
+
+    # Bookings
+    bookings = (await db.execute(
+        select(Booking).where(
+            Booking.technician_id == tid,
+            Booking.created_at >= start_dt,
+            Booking.created_at <= end_dt,
+        ).order_by(Booking.created_at.desc())
+    )).scalars().all()
+
+    booking_ids = [b.id for b in bookings]
+
+    # Attendance
+    att_rows = (await db.execute(
+        select(Attendance).where(
+            Attendance.technician_id == tid,
+            Attendance.date >= sd,
+            Attendance.date <= ed,
+        ).order_by(Attendance.date)
+    )).scalars().all()
+
+    # Payment transactions
+    pay_rows = []
+    cash_collections = []
+    if booking_ids:
+        pay_rows = (await db.execute(
+            select(PaymentTransaction).where(
+                PaymentTransaction.booking_id.in_(booking_ids),
+                PaymentTransaction.status == "SUCCESS",
+            ).order_by(PaymentTransaction.created_at.desc())
+        )).scalars().all()
+
+        cash_collections = (await db.execute(
+            select(CashCollectionRecord).where(
+                CashCollectionRecord.booking_id.in_(booking_ids),
+            ).order_by(CashCollectionRecord.created_at.desc())
+        )).scalars().all()
+
+    # Revenue summary
+    cash_total     = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) in ("CASH", "PaymentMethod.CASH"))
+    online_total   = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) not in ("CASH", "PaymentMethod.CASH", "PAY_LATER", "PaymentMethod.PAY_LATER"))
+    paylater_total = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) in ("PAY_LATER", "PaymentMethod.PAY_LATER"))
+    total_revenue  = sum(p.amount or 0 for p in pay_rows)
+
+    att_days   = sum(1 for a in att_rows if a.status in ("PRESENT", "HALF_DAY"))
+    total_secs = sum((a.accumulated_seconds or 0) for a in att_rows)
+    hours      = round(total_secs / 3600, 2)
+
+    # Status breakdown for bookings
+    status_counts: dict = {}
+    for b in bookings:
+        st = b.status.value if hasattr(b.status, "value") else str(b.status)
+        status_counts[st] = status_counts.get(st, 0) + 1
+
+    return success_response(data={
+        "technician": {
+            "id":     str(tech.id),
+            "name":   tech.name,
+            "mobile": tech.mobile,
+        },
+        "group": {
+            "name":           group.name,
+            "monthly_salary": group.monthly_salary or 0,
+            "petrol_amount":  group.petrol_amount  or 0,
+            "mobile_recharge": group.mobile_recharge or 0,
+            "bonus_amount":   group.bonus_amount   or 0,
+            "hra_amount":     group.hra_amount      or 0,
+            "other_allowances": group.other_allowances or 0,
+        },
+        "summary": {
+            "total_bookings":    len(bookings),
+            "status_breakdown":  status_counts,
+            "attendance_days":   att_days,
+            "total_hours_worked": hours,
+            "cash_in_hand_total": round(sum(c.amount or 0 for c in cash_collections), 2),
+            "cash_in_hand_count": len(cash_collections),
+            "revenue_cash":      round(cash_total, 2),
+            "revenue_online":    round(online_total, 2),
+            "revenue_pay_later": round(paylater_total, 2),
+            "revenue_total":     round(total_revenue, 2),
+        },
+        "bookings": [
+            {
+                "id":             str(b.id),
+                "booking_number": b.booking_number if hasattr(b, "booking_number") else None,
+                "status":         b.status.value if hasattr(b.status, "value") else str(b.status),
+                "service_name":   b.service_name,
+                "city":           b.city,
+                "total_amount":   b.total_amount,
+                "scheduled_date": b.scheduled_date.strftime("%Y-%m-%d") if b.scheduled_date else None,
+                "created_at":     iso(b.created_at),
+            }
+            for b in bookings
+        ],
+        "attendance": [
+            {
+                "date":         str(a.date),
+                "status":       a.status,
+                "hours_worked": round((a.accumulated_seconds or 0) / 3600, 2),
+                "check_in":     str(a.check_in)  if a.check_in  else None,
+                "check_out":    str(a.check_out) if a.check_out else None,
+                "notes":        a.notes,
+            }
+            for a in att_rows
+        ],
+        "cash_collections": [
+            {
+                "id":           str(c.id),
+                "booking_id":   str(c.booking_id),
+                "amount":       c.amount,
+                "status":       c.status.value if hasattr(c.status, "value") else str(c.status),
+                "collected_at": iso(c.collected_at) if c.collected_at else None,
+                "created_at":   iso(c.created_at),
+                "notes":        c.notes,
+            }
+            for c in cash_collections
+        ],
+        "revenue_transactions": [
+            {
+                "id":                str(p.id),
+                "booking_id":        str(p.booking_id),
+                "method":            p.method.value if hasattr(p.method, "value") else str(p.method),
+                "amount":            p.amount,
+                "transaction_number": p.transaction_number,
+                "reference_number":  p.reference_number,
+                "created_at":        iso(p.created_at),
+            }
+            for p in pay_rows
+        ],
+    })
+
+
 @router.post("/generate", summary="Generate/preview salary settlement for a technician [Admin]")
 async def generate_salary_settlement(
     payload: GenerateSalaryRequest,
@@ -420,12 +580,46 @@ async def get_settlement(
     )).scalars().all()
 
     data = _fmt_settlement(s, tech.name if tech else None, tech.mobile if tech else None, group.name if group else None)
+    # ── Enhanced booking details with service name, amount, payment method ──
+    from app.models.payment import PaymentTransaction, CashCollectionRecord, CashCollectionStatus
+    from app.models.invoice import Invoice
+
+    # Get all booking IDs for this technician in the month
+    booking_ids = [b.id for b in bookings]
+
+    # Payment transactions for these bookings (revenue data)
+    pay_rows = []
+    cash_collections = []
+    if booking_ids:
+        pay_rows = (await db.execute(
+            select(PaymentTransaction).where(
+                PaymentTransaction.booking_id.in_(booking_ids),
+                PaymentTransaction.status == "SUCCESS",
+            ).order_by(PaymentTransaction.created_at)
+        )).scalars().all()
+
+        cash_collections = (await db.execute(
+            select(CashCollectionRecord).where(
+                CashCollectionRecord.booking_id.in_(booking_ids),
+            ).order_by(CashCollectionRecord.created_at.desc())
+        )).scalars().all()
+
+    # Revenue summary
+    cash_total    = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) in ("CASH", "PaymentMethod.CASH"))
+    online_total  = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) not in ("CASH", "PaymentMethod.CASH", "PAY_LATER", "PaymentMethod.PAY_LATER"))
+    paylater_total = sum(p.amount or 0 for p in pay_rows if p.method and str(p.method) in ("PAY_LATER", "PaymentMethod.PAY_LATER"))
+    total_revenue  = sum(p.amount or 0 for p in pay_rows)
+
     data["bookings"] = [
         {
             "id": str(b.id),
             "booking_number": b.booking_number if hasattr(b, "booking_number") else None,
             "status": b.status.value if hasattr(b.status, "value") else str(b.status),
+            "service_name": b.service_name,
+            "city": b.city,
+            "total_amount": b.total_amount,
             "created_at": iso(b.created_at),
+            "scheduled_date": b.scheduled_date.strftime("%Y-%m-%d") if b.scheduled_date else None,
         }
         for b in bookings
     ]
@@ -434,8 +628,43 @@ async def get_settlement(
             "date": str(a.date),
             "status": a.status,
             "hours_worked": round((a.accumulated_seconds or 0) / 3600, 2),
+            "check_in": str(a.check_in) if a.check_in else None,
+            "check_out": str(a.check_out) if a.check_out else None,
+            "notes": a.notes,
         }
         for a in att_rows
+    ]
+    data["cash_collections"] = [
+        {
+            "id": str(c.id),
+            "booking_id": str(c.booking_id),
+            "amount": c.amount,
+            "status": c.status.value if hasattr(c.status, "value") else str(c.status),
+            "collected_at": iso(c.collected_at) if c.collected_at else None,
+            "created_at": iso(c.created_at),
+            "notes": c.notes,
+        }
+        for c in cash_collections
+    ]
+    data["revenue_summary"] = {
+        "cash_total": round(cash_total, 2),
+        "online_total": round(online_total, 2),
+        "pay_later_total": round(paylater_total, 2),
+        "total_revenue": round(total_revenue, 2),
+        "total_transactions": len(pay_rows),
+    }
+    data["revenue_transactions"] = [
+        {
+            "id": str(p.id),
+            "booking_id": str(p.booking_id),
+            "method": p.method.value if hasattr(p.method, "value") else str(p.method),
+            "amount": p.amount,
+            "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+            "created_at": iso(p.created_at),
+            "transaction_number": p.transaction_number,
+            "reference_number": p.reference_number,
+        }
+        for p in pay_rows
     ]
     data["group_structure"] = {
         "monthly_salary":   group.monthly_salary   if group else 0,

@@ -1,6 +1,6 @@
 """Add domain_profiles table and system_settings table
 
-Revision ID: 013_domain_profile_system_settings
+Revision ID: 013_domain_profile
 Revises: 012_public_booking_fields
 Create Date: 2026-06-15
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
-revision = '013_domain_profile_system_settings'
+revision = '013_domain_profile'
 down_revision = '012_public_booking_fields'
 branch_labels = None
 depends_on = None

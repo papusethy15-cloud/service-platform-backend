@@ -1,7 +1,7 @@
 """Add domain_service_overrides table — per-domain image and SEO for each linked service
 
 Revision ID: 014_domain_service_overrides
-Revises: 013_domain_profile_system_settings
+Revises: 013_domain_profile
 Create Date: 2026-06-15
 """
 from alembic import op
@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 revision = '014_domain_service_overrides'
-down_revision = '013_domain_profile_system_settings'
+down_revision = '013_domain_profile'
 branch_labels = None
 depends_on = None
 

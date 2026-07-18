@@ -23,7 +23,8 @@ def upgrade():
             ADD COLUMN IF NOT EXISTS collected_by_role VARCHAR(30)
     """))
 
-    # Create enum type if not exists
+    # Create enum type — DO block is idempotent but sa.Enum in create_table
+    # would auto-issue CREATE TYPE again; use create_type=False to prevent that.
     bind.execute(sa.text("""
         DO $$ BEGIN
             CREATE TYPE cashcollectionstatus AS ENUM ('PENDING', 'COLLECTED');
@@ -42,6 +43,8 @@ def upgrade():
     )).scalar()
 
     if not table_exists:
+        # create_type=False: enum already created above via DO block, don't let SA auto-create it again
+        cash_status_enum = postgresql.ENUM('PENDING', 'COLLECTED', name='cashcollectionstatus', create_type=False)
         op.create_table(
             'cash_collection_records',
             sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,
@@ -53,8 +56,7 @@ def upgrade():
             sa.Column('technician_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('technicians.id'), nullable=False),
             sa.Column('customer_id',   postgresql.UUID(as_uuid=True), sa.ForeignKey('customers.id'),   nullable=False),
             sa.Column('amount',   sa.Float,   nullable=False),
-            sa.Column('status',   sa.Enum('PENDING', 'COLLECTED', name='cashcollectionstatus'),
-                      nullable=False, server_default='PENDING'),
+            sa.Column('status',   cash_status_enum, nullable=False, server_default='PENDING'),
             sa.Column('collected_by', postgresql.UUID(as_uuid=True), sa.ForeignKey('users.id'), nullable=True),
             sa.Column('collected_at', sa.DateTime, nullable=True),
             sa.Column('notes',     sa.Text,    nullable=True),

@@ -34,3 +34,5 @@ from app.models.city import City, Zone, Area, CitySettings
 from app.models.domain import Domain, DomainCategory, DomainService, DomainCity, ServiceCityPrice
 from app.models.domain import DomainSeo, DomainProfile, DomainServiceOverride
 from app.models.system_setting import SystemSetting
+from app.models.callback_request import CallbackRequest, CallbackStatus
+from app.models.cco_attendance import CcoAttendance, CcoSalarySettlement

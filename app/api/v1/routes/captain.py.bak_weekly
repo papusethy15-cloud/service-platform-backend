@@ -64,29 +64,6 @@ async def _tech_profile(tech: Technician, db: AsyncSession) -> dict:
     )
     live_total_jobs = jobs_result.scalar() or 0
 
-    # ── Commission group info ──────────────────────────────────────────────
-    from app.models.commission import CommissionGroup, CommissionGroupAssignment
-    _comm_group_id   = None
-    _comm_group_name = None
-    _is_salary_group = False
-    _has_commission_group = False
-    _assign_res = await db.execute(
-        select(CommissionGroupAssignment).where(
-            CommissionGroupAssignment.technician_id == tech.id
-        )
-    )
-    _assign = _assign_res.scalar_one_or_none()
-    if _assign:
-        _grp_res = await db.execute(
-            select(CommissionGroup).where(CommissionGroup.id == _assign.group_id)
-        )
-        _grp = _grp_res.scalar_one_or_none()
-        if _grp and _grp.is_active:
-            _comm_group_id   = str(_grp.id)
-            _comm_group_name = _grp.name
-            _is_salary_group = bool(getattr(_grp, "is_salary_group", False))
-            _has_commission_group = True
-
     return {
         "id":               str(tech.id),
         "user_id":          str(tech.user_id),
@@ -113,11 +90,6 @@ async def _tech_profile(tech: Technician, db: AsyncSession) -> dict:
         "payout_account_holder":  tech.payout_account_holder,
         "payout_method_verified": tech.payout_method_verified if tech.payout_method_verified is not None else False,
         "has_payout_method":      bool(tech.payout_upi_id or tech.payout_bank_account),
-        # Commission group
-        "commission_group_id":    _comm_group_id,
-        "commission_group_name":  _comm_group_name,
-        "is_salary_group":        _is_salary_group,
-        "has_commission_group":   _has_commission_group,
     }
 
 
@@ -665,58 +637,6 @@ async def captain_earnings(
         "pending_commission":       int(round(pending_commission)),
         "approved_commission":      int(round(approved_commission)),
     })
-
-
-@router.get("/me/weekly-stats", summary="Captain: weekly completed & cancelled bookings chart [Technician]")
-async def captain_weekly_stats(
-    current_user: dict = Depends(AdminOrTech),
-    db: AsyncSession = Depends(get_db),
-):
-    """Returns last 7 days completed and cancelled booking counts (IST dates)."""
-    tech = await _get_technician_for_user(current_user["user_id"], db)
-
-    _IST = timezone(timedelta(hours=5, minutes=30))
-    _ist_now = datetime.now(timezone.utc).astimezone(_IST)
-    # Build 7 days: today back to 6 days ago (IST midnight boundaries)
-    days = []
-    for i in range(6, -1, -1):
-        day_ist = (_ist_now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-        day_start_utc = day_ist.astimezone(timezone.utc)
-        day_end_utc   = (day_ist + timedelta(days=1)).astimezone(timezone.utc)
-        days.append({
-            "label": day_ist.strftime("%a"),   # Mon, Tue, …
-            "date":  day_ist.strftime("%Y-%m-%d"),
-            "start": day_start_utc,
-            "end":   day_end_utc,
-        })
-
-    result = []
-    for d in days:
-        completed_res = await db.execute(
-            select(func.count(Booking.id)).where(
-                Booking.technician_id == tech.id,
-                Booking.status.in_([BookingStatus.COMPLETED, BookingStatus.CLOSED, BookingStatus.SETTLED]),
-                Booking.updated_at >= d["start"],
-                Booking.updated_at <  d["end"],
-            )
-        )
-        cancelled_res = await db.execute(
-            select(func.count(Booking.id)).where(
-                Booking.technician_id == tech.id,
-                Booking.status == BookingStatus.CANCELLED,
-                Booking.updated_at >= d["start"],
-                Booking.updated_at <  d["end"],
-            )
-        )
-        result.append({
-            "day":       d["label"],
-            "date":      d["date"],
-            "completed": completed_res.scalar() or 0,
-            "cancelled": cancelled_res.scalar() or 0,
-        })
-
-    return success_response(data={"weekly": result})
-
 
 
 @router.get("/me/wallet/transactions", summary="Captain: wallet transaction history [Technician]")

@@ -58,3 +58,7 @@ api_router.include_router(captain.router,        prefix="/captain",        tags=
 # Salary settlements
 from app.api.v1.routes import salary as salary_routes
 api_router.include_router(salary_routes.router, prefix="/salary-settlements", tags=["Salary"])
+
+# CCO Attendance & Salary
+from app.api.v1.routes import cco_attendance as cco_att_routes
+api_router.include_router(cco_att_routes.router, prefix="/cco-attendance", tags=["CCO Attendance"])

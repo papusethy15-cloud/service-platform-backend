@@ -23,22 +23,14 @@ def _column_exists(bind, table_name: str, column_name: str) -> bool:
 
 
 def upgrade():
-    bind = op.get_bind()
-    cols = [
-        ('customer_rating', sa.Float()),
-        ('customer_review', sa.Text()),
-        ('customer_name',   sa.String(120)),
-        ('customer_city',   sa.String(80)),
-    ]
-    for col_name, col_type in cols:
-        if not _column_exists(bind, 'bookings', col_name):
-            op.add_column('bookings', sa.Column(col_name, col_type, nullable=True))
-        else:
-            print(f"[INFO] 074: bookings.{col_name} already exists — skipping")
+    op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS customer_rating FLOAT"))
+    op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS customer_review TEXT"))
+    op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS customer_name   VARCHAR(120)"))
+    op.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS customer_city   VARCHAR(80)"))
 
 
 def downgrade():
-    bind = op.get_bind()
-    for col in ['customer_city', 'customer_name', 'customer_review', 'customer_rating']:
-        if _column_exists(bind, 'bookings', col):
-            op.drop_column('bookings', col)
+    op.execute(text("ALTER TABLE bookings DROP COLUMN IF EXISTS customer_city"))
+    op.execute(text("ALTER TABLE bookings DROP COLUMN IF EXISTS customer_name"))
+    op.execute(text("ALTER TABLE bookings DROP COLUMN IF EXISTS customer_review"))
+    op.execute(text("ALTER TABLE bookings DROP COLUMN IF EXISTS customer_rating"))

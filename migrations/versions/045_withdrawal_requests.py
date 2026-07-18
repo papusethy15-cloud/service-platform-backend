@@ -15,6 +15,14 @@ depends_on = None
 
 
 def upgrade():
+    bind = op.get_bind()
+    from sqlalchemy import text as _text
+    exists = bind.execute(_text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='withdrawal_requests')"
+    )).scalar()
+    if exists:
+        print("[045] withdrawal_requests already exists — skipping")
+        return
     op.create_table(
         'withdrawal_requests',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),

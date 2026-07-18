@@ -26,10 +26,17 @@ depends_on = None
 # in autocommit mode (no BEGIN/COMMIT wrapper) which is required for enum
 # value additions.
 def upgrade() -> None:
-    # Run outside any transaction — required by Postgres for ALTER TYPE ADD VALUE
-    connection = op.get_bind()
-    connection.execution_options(isolation_level="AUTOCOMMIT")
-    connection.execute(text("ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED'"))
+    # ALTER TYPE ADD VALUE cannot run inside a transaction block.
+    # We use raw COMMIT/BEGIN to step outside Alembic's transaction temporarily.
+    bind = op.get_bind()
+    result = bind.execute(text(
+        "SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+        "WHERE t.typname = 'paymentstatus' AND e.enumlabel = 'CANCELLED'"
+    ))
+    if not result.fetchone():
+        bind.execute(text("COMMIT"))
+        bind.execute(text("ALTER TYPE paymentstatus ADD VALUE IF NOT EXISTS 'CANCELLED'"))
+        bind.execute(text("BEGIN"))
 
 
 def downgrade() -> None:

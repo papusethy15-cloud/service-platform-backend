@@ -15,16 +15,7 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
-    # Idempotent: skip if column already exists (safe for VPS re-runs)
-    bind = op.get_bind()
-    inspector = inspect(bind)
-    cols = [c['name'] for c in inspector.get_columns('users')]
-    if 'mpin_hash' not in cols:
-        op.add_column('users', sa.Column('mpin_hash', sa.String(255), nullable=True))
+    op.execute(sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS mpin_hash VARCHAR(255)"))
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    inspector = inspect(bind)
-    cols = [c['name'] for c in inspector.get_columns('users')]
-    if 'mpin_hash' in cols:
-        op.drop_column('users', 'mpin_hash')
+    op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS mpin_hash"))

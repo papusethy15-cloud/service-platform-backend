@@ -15,13 +15,11 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
-    # Use raw SQL with IF NOT EXISTS to make this migration idempotent on VPS re-runs
     from sqlalchemy import text
-    conn = op.get_bind()
-    conn.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS customer_mobile_numbers TEXT[]"))
-    conn.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS service_ids TEXT[]"))
-    conn.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS category_ids TEXT[]"))
-    conn.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS per_customer_limit INTEGER"))
+    op.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS customer_mobile_numbers TEXT[]"))
+    op.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS service_ids TEXT[]"))
+    op.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS category_ids TEXT[]"))
+    op.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS per_customer_limit INTEGER"))
 
 def downgrade():
     op.drop_column('coupons', 'customer_mobile_numbers')

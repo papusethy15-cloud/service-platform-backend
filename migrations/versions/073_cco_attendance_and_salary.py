@@ -31,6 +31,7 @@ def _column_exists(bind, table_name: str, column_name: str) -> bool:
 
 
 def upgrade():
+    from sqlalchemy import text as _t
     bind = op.get_bind()
 
     # ── 1. CCO Attendance table ───────────────────────────────────────────────
@@ -93,25 +94,22 @@ def upgrade():
         print("[INFO] 073: cco_salary_settlements already exists — skipping create")
 
     # ── 3. Add payout / salary fields to users table (skip if already exist) ─
-    users_cols = [
-        ('payout_upi_id',         sa.String(200)),
-        ('payout_bank_account',   sa.String(100)),
-        ('payout_bank_ifsc',      sa.String(20)),
-        ('payout_bank_name',      sa.String(100)),
-        ('payout_account_holder', sa.String(150)),
-        ('monthly_salary',        sa.Float()),
-        ('petrol_amount',         sa.Float()),
-        ('mobile_recharge',       sa.Float()),
-        ('bonus_amount',          sa.Float()),
-        ('hra_amount',            sa.Float()),
-        ('other_allowances',      sa.Float()),
-        ('salary_notes',          sa.Text()),
+    users_col_ddl = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_upi_id         VARCHAR(200)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_bank_account   VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_bank_ifsc      VARCHAR(20)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_bank_name      VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_account_holder VARCHAR(150)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_salary        FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS petrol_amount         FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_recharge       FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_amount          FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS hra_amount            FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS other_allowances      FLOAT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_notes          TEXT",
     ]
-    for col_name, col_type in users_cols:
-        if not _column_exists(bind, 'users', col_name):
-            op.add_column('users', sa.Column(col_name, col_type, nullable=True))
-        else:
-            print(f"[INFO] 073: users.{col_name} already exists — skipping")
+    for stmt in users_col_ddl:
+        op.execute(_t(stmt))
 
 
 def downgrade():

@@ -18,12 +18,6 @@ depends_on = None
 
 
 def upgrade():
-    with op.get_context().autocommit_block():
-        # Use raw connection for IF NOT EXISTS safety
-        pass
-
-    conn = op.get_bind()
-
     stmts = [
         # appliance_brands
         "ALTER TABLE appliance_brands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE",
@@ -110,7 +104,7 @@ def upgrade():
 
     for stmt in stmts:
         try:
-            conn.execute(sa.text(stmt))
+            op.execute(sa.text(stmt))
         except Exception as e:
             print(f"[SKIP] {stmt[:60]}... -> {e}")
 

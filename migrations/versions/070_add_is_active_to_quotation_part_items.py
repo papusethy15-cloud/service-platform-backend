@@ -28,20 +28,16 @@ depends_on = None
 
 
 def upgrade():
-    conn = op.get_bind()
-
-    conn.execute(text("""
+    op.execute(text("""
         ALTER TABLE quotation_part_items
         ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
     """))
-
-    conn.execute(text("""
+    op.execute(text("""
         UPDATE quotation_part_items SET is_active = TRUE WHERE is_active IS NULL;
     """))
 
 
 def downgrade():
-    conn = op.get_bind()
-    conn.execute(text("""
+    op.execute(text("""
         ALTER TABLE quotation_part_items DROP COLUMN IF EXISTS is_active;
     """))

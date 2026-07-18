@@ -15,22 +15,15 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('commission_groups',
-        sa.Column('is_salary_group', sa.Boolean(), nullable=False, server_default='false'))
-    op.add_column('commission_groups',
-        sa.Column('monthly_salary', sa.Float(), nullable=True))
-    op.add_column('commission_groups',
-        sa.Column('petrol_amount', sa.Float(), nullable=True, server_default='0'))
-    op.add_column('commission_groups',
-        sa.Column('mobile_recharge', sa.Float(), nullable=True, server_default='0'))
-    op.add_column('commission_groups',
-        sa.Column('bonus_amount', sa.Float(), nullable=True, server_default='0'))
-    op.add_column('commission_groups',
-        sa.Column('hra_amount', sa.Float(), nullable=True, server_default='0'))
-    op.add_column('commission_groups',
-        sa.Column('other_allowances', sa.Float(), nullable=True, server_default='0'))
-    op.add_column('commission_groups',
-        sa.Column('salary_notes', sa.String(500), nullable=True))
+    from sqlalchemy import text
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS is_salary_group BOOLEAN NOT NULL DEFAULT false"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS monthly_salary FLOAT"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS petrol_amount FLOAT DEFAULT 0"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS mobile_recharge FLOAT DEFAULT 0"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS bonus_amount FLOAT DEFAULT 0"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS hra_amount FLOAT DEFAULT 0"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS other_allowances FLOAT DEFAULT 0"))
+    op.execute(text("ALTER TABLE commission_groups ADD COLUMN IF NOT EXISTS salary_notes VARCHAR(500)"))
 
 
 def downgrade():

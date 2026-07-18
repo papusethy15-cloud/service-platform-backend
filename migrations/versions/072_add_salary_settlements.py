@@ -16,6 +16,14 @@ depends_on = None
 
 
 def upgrade():
+    bind = op.get_bind()
+    from sqlalchemy import text as _text
+    exists = bind.execute(_text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='salary_settlements')"
+    )).scalar()
+    if exists:
+        print("[072] salary_settlements already exists — skipping")
+        return
     op.create_table(
         'salary_settlements',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,

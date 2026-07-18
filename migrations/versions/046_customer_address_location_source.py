@@ -14,10 +14,9 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'customer_addresses',
-        sa.Column('location_source', sa.String(50), nullable=True, comment="'gps'|'whatsapp'|'manual'|'geocoded'"),
-    )
+    op.execute(sa.text(
+        "ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS location_source VARCHAR(50)"
+    ))
 
 
 def downgrade():

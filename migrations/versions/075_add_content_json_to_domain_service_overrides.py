@@ -1,13 +1,13 @@
 """Add includes_json, excludes_json, faqs_json to domain_service_overrides
 
-Revision ID: 075_add_content_json_to_domain_service_overrides
+Revision ID: 075
 Revises: 074_add_customer_review_fields
 Create Date: 2026-07-19
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = '075_add_content_json_to_domain_service_overrides'
+revision = '075'
 down_revision = '074_add_customer_review_fields'
 branch_labels = None
 depends_on = None

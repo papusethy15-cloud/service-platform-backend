@@ -84,6 +84,27 @@ class BulkAreaItem(BaseModel):
 class BulkAreasRequest(BaseModel):
     areas: List[BulkAreaItem]
 
+# ── Bulk JSON Import Schemas ───────────────────────────────────
+class BulkImportAreaItem(BaseModel):
+    name:             str
+    pincode:          Optional[str]   = None
+    surge_multiplier: float           = 1.0
+
+class BulkImportZoneItem(BaseModel):
+    name:        str
+    description: Optional[str]            = None
+    areas:       List[BulkImportAreaItem] = []
+
+class BulkImportCityItem(BaseModel):
+    name:               str
+    state:              str
+    country:            str   = "India"
+    base_travel_charge: float = 0.0
+    zones:              List[BulkImportZoneItem] = []
+
+class BulkImportRequest(BaseModel):
+    cities: List[BulkImportCityItem]
+
 class CreateZoneRequest(BaseModel):
     name:        str
     description: Optional[str] = None
@@ -130,6 +151,91 @@ def _area_row(a: Area) -> dict:
 # ══════════════════════════════════════════════════════════════
 # ROUTE ORDER: static paths before parameterised paths
 # ══════════════════════════════════════════════════════════════
+
+# ── Bulk JSON Import (static — must be before /{city_id}) ─────
+@router.post("/bulk-import", summary="Bulk import cities, zones, and areas from JSON [Admin]")
+async def bulk_import_cities(
+    payload: BulkImportRequest,
+    current_user: dict = Depends(AdminOnly),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Import multiple cities with their zones and areas in one call.
+    Duplicate protection: existing cities/zones/areas (by name) are skipped.
+    Returns a summary of what was created vs skipped.
+    """
+    summary = []
+
+    for city_data in payload.cities:
+        city_result = {"city": city_data.name, "city_status": "", "zones": []}
+
+        # ── City: find or skip (duplicate by name) ────────────
+        existing_city = (await db.execute(
+            select(City).where(City.name == city_data.name)
+        )).scalar_one_or_none()
+
+        if existing_city:
+            city = existing_city
+            city_result["city_status"] = "skipped (already exists)"
+        else:
+            city = City(
+                name=city_data.name,
+                state=city_data.state,
+                country=city_data.country,
+                base_travel_charge=city_data.base_travel_charge,
+            )
+            db.add(city)
+            await db.flush()  # get city.id
+            db.add(CitySettings(city_id=city.id))
+            city_result["city_status"] = "created"
+
+        # ── Zones + Areas ──────────────────────────────────────
+        for zone_data in city_data.zones:
+            zone_result = {"zone": zone_data.name, "zone_status": "", "areas": []}
+
+            # Zone: find or skip (duplicate by name within city)
+            existing_zone = (await db.execute(
+                select(Zone).where(Zone.city_id == city.id, Zone.name == zone_data.name)
+            )).scalar_one_or_none()
+
+            if existing_zone:
+                zone = existing_zone
+                zone_result["zone_status"] = "skipped (already exists)"
+            else:
+                zone = Zone(
+                    city_id=city.id,
+                    name=zone_data.name,
+                    description=zone_data.description,
+                )
+                db.add(zone)
+                await db.flush()  # get zone.id
+                zone_result["zone_status"] = "created"
+
+            # Areas: find or skip (duplicate by name within city)
+            for area_data in zone_data.areas:
+                existing_area = (await db.execute(
+                    select(Area).where(Area.city_id == city.id, Area.name == area_data.name)
+                )).scalar_one_or_none()
+
+                if existing_area:
+                    zone_result["areas"].append({"name": area_data.name, "status": "skipped (already exists)"})
+                else:
+                    area = Area(
+                        city_id=city.id,
+                        zone_id=zone.id,
+                        name=area_data.name,
+                        pincode=area_data.pincode,
+                        surge_multiplier=area_data.surge_multiplier,
+                    )
+                    db.add(area)
+                    zone_result["areas"].append({"name": area_data.name, "status": "created"})
+
+            city_result["zones"].append(zone_result)
+
+        summary.append(city_result)
+
+    await db.commit()
+    return success_response(data={"import_summary": summary}, message="Bulk import completed")
 
 # ── Search (static — must be before /{city_id}) ───────────────
 @router.get("/search", summary="Search cities / areas by name or pincode [Public]")

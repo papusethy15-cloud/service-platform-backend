@@ -1,14 +1,14 @@
-"""VPS missing columns fix: inventory_items.gst_percent, vendors full column set
+"""Add remaining missing columns to vendors table
 
-Revision ID: 076
-Revises: 075
+Revision ID: 077
+Revises: 076
 Create Date: 2026-07-20
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = '076'
-down_revision = '075'
+revision = '077'
+down_revision = '076'
 branch_labels = None
 depends_on = None
 
@@ -24,16 +24,6 @@ def _col_exists(conn, table, column):
 def upgrade():
     conn = op.get_bind()
 
-    # ── Fix 1: inventory_items.gst_percent ─────────────────────────────────
-    if not _col_exists(conn, "inventory_items", "gst_percent"):
-        conn.execute(sa.text(
-            "ALTER TABLE inventory_items ADD COLUMN gst_percent FLOAT DEFAULT 18.0"
-        ))
-        print("[OK] Added inventory_items.gst_percent")
-    else:
-        print("[SKIP] inventory_items.gst_percent already exists")
-
-    # ── Fix 2: vendors — add ALL columns the ORM model expects ─────────────
     vendor_cols = [
         ("contact_person", "VARCHAR(150)"),
         ("mobile",         "VARCHAR(20)"),
@@ -53,6 +43,5 @@ def upgrade():
 
 def downgrade():
     conn = op.get_bind()
-    conn.execute(sa.text("ALTER TABLE inventory_items DROP COLUMN IF EXISTS gst_percent"))
     for col in ("contact_person", "mobile", "email", "gstin", "address"):
         conn.execute(sa.text(f"ALTER TABLE vendors DROP COLUMN IF EXISTS {col}"))

@@ -28,7 +28,14 @@ async def my_referral_code(current_user: dict = Depends(AnyAuthenticated), db: A
 async def referral_history(current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
     from app.models.referral import Referral
     referrals = (await db.execute(select(Referral).where(Referral.referrer_id == UUID(current_user["user_id"])).order_by(Referral.created_at.desc()))).scalars().all()
-    return success_response(data=[{"id": str(r.id), "referee_id": str(r.referee_id), "reward_amount": r.reward_amount, "status": r.status, "created_at": iso(r.created_at)} for r in referrals])
+    # Use referred_id (actual DB column name, not referee_id)
+    return success_response(data=[{
+        "id": str(r.id),
+        "referred_id": str(r.referred_id) if r.referred_id else None,
+        "reward_amount": r.reward_amount,
+        "status": r.status,
+        "created_at": iso(r.created_at)
+    } for r in referrals])
 
 @router.get("/rewards", summary="Reward history")
 async def reward_history(current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):

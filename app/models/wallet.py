@@ -7,11 +7,12 @@ from app.models.base import Base
 class Wallet(Base):
     __tablename__ = "wallets"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, unique=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, unique=True)
     technician_id = Column(UUID(as_uuid=True), ForeignKey("technicians.id"), nullable=True, unique=True)
     balance = Column(Float, default=0.0)
     total_earned = Column(Float, default=0.0)
     total_withdrawn = Column(Float, default=0.0)
+    pending_amount = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

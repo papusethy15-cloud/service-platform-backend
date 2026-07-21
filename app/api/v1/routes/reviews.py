@@ -16,7 +16,7 @@ from app.models.technician import TechnicianRating
 from app.models.booking import Booking, BookingStatus
 from app.models.customer import Customer
 
-router = APIRouter(prefix="/reviews", tags=["reviews"])
+router = APIRouter(tags=["reviews"])
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────

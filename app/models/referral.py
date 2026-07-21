@@ -12,7 +12,8 @@ class ReferralCode(BaseModel):
 class Referral(BaseModel):
     __tablename__ = "referrals"
     referrer_id   = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    referee_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    referred_id   = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)   # DB column name
+    code          = Column(String(20), nullable=True)
     reward_amount = Column(Float, default=0.0)
     status        = Column(String(20), default="PENDING")
 

@@ -144,7 +144,7 @@ async def _recalculate_quotation(db: AsyncSession, quotation: Quotation):
         coupon_disc = getattr(quotation, "coupon_discount", 0.0) or 0.0
     # ─────────────────────────────────────────────────────────────────────────
 
-    taxable_amount = max(quotation.subtotal_amount - quotation.discount_amount - coupon_disc + quotation.adjustment_amount, 0.0)
+    taxable_amount = max(quotation.subtotal_amount - quotation.discount_amount - coupon_disc - quotation.adjustment_amount, 0.0)
     # Tax mode: NONE = zero tax regardless of tax_percent; B2C/B2B = apply tax_percent
     tax_mode = getattr(quotation, 'tax_mode', 'B2C') or 'B2C'
     if tax_mode == 'NONE':
@@ -669,7 +669,7 @@ async def approve_quotation(
         BookingStatus.ARRIVED, BookingStatus.INSPECTING, BookingStatus.IN_PROGRESS,
     }
     if booking:
-        booking.base_amount = round(quotation.subtotal_amount - quotation.discount_amount + quotation.adjustment_amount, 2)
+        booking.base_amount = round(quotation.subtotal_amount - quotation.discount_amount - quotation.adjustment_amount, 2)
         booking.gst_amount = quotation.tax_amount
         booking.total_amount = quotation.total_amount
         # Bug 7 fix: advance booking status so it's filterable and reflects approval
@@ -2546,7 +2546,7 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     total    = float(quotation.total_amount or 0)
     # Derive subtotal if not set
     if subtotal <= 0:
-        subtotal = total - tax_amt + disc - adj
+        subtotal = total - tax_amt + disc + adj
 
     # Determine GST mode from quotation
     _qt_tax_mode = str(getattr(quotation, "tax_mode", "B2C") or "B2C").upper()
@@ -2561,7 +2561,7 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
                                    S("QDisc", 9, rl_colors.HexColor("#DC2626"), align=2))])
     if adj != 0:
         tot_rows.append([Paragraph("Adjustment", sTLbl),
-                         Paragraph(f"INR {adj:,.2f}", sTVal)])
+                         Paragraph(f"- INR {adj:,.2f}", S("QDisc", 9, rl_colors.HexColor("#DC2626"), align=2))])
     # Show tax only for GST quotations
     if not _qt_is_non_gst and tax_amt > 0:
         # Split into CGST+SGST for B2C/B2B style

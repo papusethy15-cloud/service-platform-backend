@@ -934,6 +934,15 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_table THEN NULL; END $$;
 -- Ensure wallet id has a default (some VPS tables missing gen_random_uuid default)
 ALTER TABLE wallets ALTER COLUMN id SET DEFAULT gen_random_uuid();
+-- ── P-WALLET-TRANSACTIONS: fix legacy `type` NOT NULL column ────────────────
+-- VPS wallet_transactions has: type VARCHAR(20) NOT NULL (legacy col)
+-- The model uses `transaction_type` instead. Back-fill `type` from
+-- `transaction_type` for any existing rows where type IS NULL, and
+-- set a DEFAULT so future raw inserts don't fail.
+UPDATE wallet_transactions SET type = transaction_type
+  WHERE type IS NULL AND transaction_type IS NOT NULL;
+UPDATE wallet_transactions SET type = 'CREDIT'
+  WHERE type IS NULL;
 """
 
     try:

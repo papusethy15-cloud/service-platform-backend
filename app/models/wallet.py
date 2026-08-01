@@ -21,6 +21,7 @@ class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     wallet_id = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=False)
+    type = Column(String(20), nullable=True)             # legacy VPS column (NOT NULL on VPS) — always mirror transaction_type
     transaction_type = Column(String(30))  # CREDIT, DEBIT, WITHDRAWAL, REFUND
     amount = Column(Float, nullable=False)
     balance_before = Column(Float, nullable=True)
@@ -29,6 +30,15 @@ class WalletTransaction(Base):
     description = Column(Text)
     status = Column(String(20), default="SUCCESS")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __init__(self, **kwargs):
+        # Auto-mirror: keep `type` (legacy VPS NOT NULL col) in sync with transaction_type
+        # so all existing WalletTransaction(..., transaction_type=X) calls work without changes
+        if "type" not in kwargs and "transaction_type" in kwargs:
+            kwargs["type"] = kwargs["transaction_type"]
+        elif "transaction_type" not in kwargs and "type" in kwargs:
+            kwargs["transaction_type"] = kwargs["type"]
+        super().__init__(**kwargs)
 
 class WithdrawalRequest(Base):
     __tablename__ = "withdrawal_requests"

@@ -454,14 +454,13 @@ async def _apply_assignment(
 
     try:
         from app.models.notification import Notification as _Notif
-        from datetime import datetime, timezone as _tz
         db.add(_Notif(
             user_id=technician.user_id,
             title="New Job Assigned 🔧",
             body=f"You have a new job for booking {_booking_num}. Tap to view.",
             channel="PUSH",
             is_read=False,
-            created_at=datetime.now(_tz.utc),
+            created_at=datetime.now(timezone.utc),
             data={
                 "type": "ASSIGNMENT_CREATED",
                 "notification_type": "ASSIGNMENT",

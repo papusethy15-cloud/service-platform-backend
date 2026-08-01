@@ -481,10 +481,43 @@ async def permanently_delete_customer(
     if booking_ids:
         await db.execute(delete(Booking).where(Booking.id.in_(booking_ids)))
 
-    # ── Customer addresses, notifications, customer, user ──────────────────
+    # ── Customer addresses, notifications ───────────────────────────────────
     await db.execute(delete(CustomerAddress).where(CustomerAddress.customer_id == customer_id))
     if user:
         await db.execute(delete(Notification).where(Notification.user_id == user.id))
+
+    # ── Wallet + wallet transactions (must go before user delete) ─────────
+    # wallets.user_id FK blocks user deletion — delete wallet_transactions first
+    # (wallet_transactions.wallet_id FK), then wallets, then the user.
+    if user:
+        from app.models.wallet import Wallet, WalletTransaction
+        wallet_ids = (await db.execute(
+            select(Wallet.id).where(Wallet.user_id == user.id)
+        )).scalars().all()
+        if wallet_ids:
+            await db.execute(delete(WalletTransaction).where(WalletTransaction.wallet_id.in_(wallet_ids)))
+        await db.execute(delete(Wallet).where(Wallet.user_id == user.id))
+
+    # ── Referrals (referral_codes, referrals, referral_rewards) ──────────
+    if user:
+        from app.models.referral import ReferralCode, Referral, ReferralReward
+        referral_ids = (await db.execute(
+            select(Referral.id).where(
+                (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
+            )
+        )).scalars().all()
+        if referral_ids:
+            await db.execute(delete(ReferralReward).where(ReferralReward.referral_id.in_(referral_ids)))
+        await db.execute(delete(Referral).where(
+            (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
+        ))
+        await db.execute(delete(ReferralReward).where(ReferralReward.user_id == user.id))
+        await db.execute(delete(ReferralCode).where(ReferralCode.user_id == user.id))
+
+    # ── RBAC: user_permissions ────────────────────────────────────────────
+    if user:
+        from app.models.rbac import UserPermission
+        await db.execute(delete(UserPermission).where(UserPermission.user_id == user.id))
 
     # Best-effort Firebase Auth cleanup -- don't block DB cleanup if this
     # fails (e.g. SDK not configured, UID already gone), but surface it.

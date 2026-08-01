@@ -906,6 +906,16 @@ CREATE TABLE IF NOT EXISTS callback_requests (
     updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
     is_active BOOLEAN DEFAULT TRUE
 );
+-- ── P-COMMISSIONS: drop stale columns left by migration 001 ─────────────────
+-- migration 001 created commissions with `amount FLOAT NOT NULL` plus
+-- commission_type / is_active / updated_at.  The model now uses base_amount
+-- + commission_amount instead.  The stale `amount NOT NULL` causes:
+--   NotNullViolationError on every POST /bookings/{id}/settle
+-- DROP COLUMN IF EXISTS is idempotent — completely safe on every startup.
+ALTER TABLE commissions DROP COLUMN IF EXISTS amount;
+ALTER TABLE commissions DROP COLUMN IF EXISTS commission_type;
+ALTER TABLE commissions DROP COLUMN IF EXISTS is_active;
+ALTER TABLE commissions DROP COLUMN IF EXISTS updated_at;
 """
 
     try:

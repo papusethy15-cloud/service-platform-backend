@@ -19,7 +19,9 @@ This causes the error on every /settle call:
     null value in column "amount" of relation "commissions"
     violates not-null constraint
 
-Fix: drop the four stale columns with safe IF EXISTS guards.
+Fix: drop the four stale columns using raw SQL with IF EXISTS guards.
+     Uses op.execute() instead of op.get_bind() to avoid Alembic 1.10+
+     deprecation abort on asyncpg backends.
 
 Revision ID: 080
 Revises: 079
@@ -36,25 +38,12 @@ depends_on = None
 
 
 def upgrade():
-    conn = op.get_bind()
-
-    # Helper — only drop if the column actually exists (idempotent)
-    def drop_if_exists(table: str, column: str):
-        exists = conn.execute(sa.text("""
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = :t AND column_name = :c
-        """), {"t": table, "c": column}).fetchone()
-        if exists:
-            op.drop_column(table, column)
-            print(f"  dropped {table}.{column}")
-        else:
-            print(f"  skip   {table}.{column} (not present)")
-
-    print("080: fixing commissions table — dropping stale columns from migration 001")
-    drop_if_exists('commissions', 'amount')           # THE bug: NOT NULL, never written
-    drop_if_exists('commissions', 'commission_type')  # orphan from 001
-    drop_if_exists('commissions', 'is_active')        # orphan from 001
-    drop_if_exists('commissions', 'updated_at')       # orphan from 001
+    # Use raw SQL with IF EXISTS — fully idempotent, no op.get_bind() needed.
+    # Each ALTER TABLE is safe to run even if the column doesn't exist.
+    op.execute("ALTER TABLE commissions DROP COLUMN IF EXISTS amount")
+    op.execute("ALTER TABLE commissions DROP COLUMN IF EXISTS commission_type")
+    op.execute("ALTER TABLE commissions DROP COLUMN IF EXISTS is_active")
+    op.execute("ALTER TABLE commissions DROP COLUMN IF EXISTS updated_at")
 
 
 def downgrade():
@@ -63,4 +52,3 @@ def downgrade():
     op.add_column('commissions', sa.Column('commission_type', sa.String(30)))
     op.add_column('commissions', sa.Column('is_active',       sa.Boolean(), server_default='true'))
     op.add_column('commissions', sa.Column('updated_at',      sa.DateTime(timezone=True)))
-    # Re-apply NOT NULL only if you truly need it (probably not — this is a rollback escape hatch)

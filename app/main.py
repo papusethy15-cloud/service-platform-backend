@@ -916,6 +916,24 @@ ALTER TABLE commissions DROP COLUMN IF EXISTS amount;
 ALTER TABLE commissions DROP COLUMN IF EXISTS commission_type;
 ALTER TABLE commissions DROP COLUMN IF EXISTS is_active;
 ALTER TABLE commissions DROP COLUMN IF EXISTS updated_at;
+-- ── P-WALLETS: fix user_id NOT NULL — technician wallets have no user_id ────
+-- Original migration 001 created wallets with user_id NOT NULL + UNIQUE.
+-- The Wallet model has user_id nullable=True (technicians use technician_id).
+-- This schema drift causes wallet creation to fail with NotNullViolationError.
+ALTER TABLE wallets ALTER COLUMN user_id DROP NOT NULL;
+-- Drop the UNIQUE constraint on user_id so technician wallets (user_id=NULL)
+-- don't conflict with each other (NULL != NULL in unique indexes, but
+-- some Postgres versions block multiple NULLs on a UNIQUE column).
+DO $$ BEGIN
+  ALTER TABLE wallets DROP CONSTRAINT IF EXISTS wallets_user_id_key;
+EXCEPTION WHEN others THEN NULL; END $$;
+-- Add a partial unique index instead: unique only when user_id IS NOT NULL
+DO $$ BEGIN
+  CREATE UNIQUE INDEX wallets_user_id_unique
+    ON wallets(user_id) WHERE user_id IS NOT NULL;
+EXCEPTION WHEN duplicate_table THEN NULL; END $$;
+-- Ensure wallet id has a default (some VPS tables missing gen_random_uuid default)
+ALTER TABLE wallets ALTER COLUMN id SET DEFAULT gen_random_uuid();
 """
 
     try:
@@ -962,8 +980,8 @@ async def _backfill_technician_wallets():
                     select(Wallet).where(Wallet.technician_id == tech.id)
                 )).scalar_one_or_none()
                 if not w:
-                    db.add(Wallet(technician_id=tech.id, balance=0.0,
-                                  total_earned=0.0, total_withdrawn=0.0))
+                    db.add(Wallet(technician_id=tech.id, user_id=tech.user_id,
+                                  balance=0.0, total_earned=0.0, total_withdrawn=0.0))
                     created += 1
             if created:
                 await db.flush()

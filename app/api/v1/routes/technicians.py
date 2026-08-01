@@ -212,7 +212,7 @@ async def create_technician(
             select(Wallet).where(Wallet.technician_id == tech.id)
         )).scalar_one_or_none()
         if not _wallet_exists:
-            db.add(Wallet(technician_id=tech.id, balance=0.0,
+            db.add(Wallet(technician_id=tech.id, user_id=user.id, balance=0.0,
                           total_earned=0.0, total_withdrawn=0.0))
 
         # Add skills if provided

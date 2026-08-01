@@ -273,8 +273,11 @@ async def pay_commission(commission_id: UUID, current_user: dict = Depends(Admin
         select(Wallet).where(Wallet.technician_id == c.technician_id)
     )).scalar_one_or_none()
     if not wallet:
-        wallet = Wallet(technician_id=c.technician_id, balance=0.0,
-                        total_earned=0.0, total_withdrawn=0.0)
+        from app.models.technician import Technician
+        _tech = (await db.execute(select(Technician).where(Technician.id == c.technician_id))).scalar_one_or_none()
+        wallet = Wallet(technician_id=c.technician_id,
+                        user_id=_tech.user_id if _tech else None,
+                        balance=0.0, total_earned=0.0, total_withdrawn=0.0)
         db.add(wallet)
         await db.flush()  # get wallet.id before using it in WalletTransaction
 
@@ -340,8 +343,11 @@ async def bulk_pay(
         if tid not in tech_wallet_map:
             w = (await db.execute(select(Wallet).where(Wallet.technician_id == c.technician_id))).scalar_one_or_none()
             if not w:
-                w = Wallet(technician_id=c.technician_id, balance=0.0,
-                           total_earned=0.0, total_withdrawn=0.0)
+                from app.models.technician import Technician
+                _tech = (await db.execute(select(Technician).where(Technician.id == c.technician_id))).scalar_one_or_none()
+                w = Wallet(technician_id=c.technician_id,
+                           user_id=_tech.user_id if _tech else None,
+                           balance=0.0, total_earned=0.0, total_withdrawn=0.0)
                 db.add(w)
                 await db.flush()  # get w.id for WalletTransaction FK
             tech_wallet_map[tid] = w

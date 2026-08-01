@@ -267,26 +267,6 @@ async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered
                 _logger.info(f"Auto-assign OFF — skipping booking {booking_number}")
                 return
 
-            # 1b. Check dispatch window (8 AM – 11 PM IST)
-            if not await _is_dispatch_window(db):
-                from datetime import datetime, timezone, timedelta
-                _IST = timezone(timedelta(hours=5, minutes=30))
-                _hour = datetime.now(_IST).hour
-                _logger.info(
-                    f"Auto-assign OUTSIDE dispatch window ({_hour:02d}:xx IST) "
-                    f"— queuing booking {booking_number} for 8 AM sweep"
-                )
-                # Queue the booking so 8 AM sweep picks it up
-                _booking_early = (await db.execute(
-                    select(Booking).where(Booking.id == _UUID(booking_id_str))
-                )).scalar_one_or_none()
-                if _booking_early and not _booking_early.technician_id and                    _booking_early.status in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
-                    existing_notes = _booking_early.notes or ""
-                    if "[PENDING_AUTO_ASSIGN]" not in existing_notes:
-                        _booking_early.notes = (existing_notes + "\n[PENDING_AUTO_ASSIGN]").strip()
-                    await db.commit()
-                return
-
             # 2. Reload booking from fresh session
             booking = (await db.execute(
                 select(Booking).where(Booking.id == _UUID(booking_id_str))
@@ -447,16 +427,6 @@ async def _sweep_pending_auto_assign(triggered_by_user_id: str) -> None:
             )).scalar_one_or_none()
             enabled = (setting_row.value if setting_row else "true").strip().lower()
             if enabled != "true":
-                return
-
-            # Check dispatch window — don't sweep outside 8 AM–11 PM IST
-            if not await _is_dispatch_window(db):
-                from datetime import datetime, timezone, timedelta
-                _IST = timezone(timedelta(hours=5, minutes=30))
-                _logger.info(
-                    f"Sweep skipped — outside dispatch window "
-                    f"({datetime.now(_IST).hour:02d}:xx IST)"
-                )
                 return
 
             # Find all unassigned PENDING/CONFIRMED bookings.

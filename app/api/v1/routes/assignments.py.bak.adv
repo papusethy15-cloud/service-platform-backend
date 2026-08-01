@@ -143,38 +143,6 @@ async def _release_assign_lock(booking_id: str) -> None:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-#  PER-TECHNICIAN SLOT LOCK — prevents concurrent booking race condition
-#  (multiple bookings created simultaneously picking same top-scored technician)
-# ════════════════════════════════════════════════════════════════════════════════
-
-async def _acquire_tech_slot_lock(technician_id: str, ttl_seconds: int = 8) -> bool:
-    """
-    Short TTL Redis lock on a technician while their slot is being committed.
-    Prevents two concurrent _maybe_auto_assign tasks from both selecting the
-    same technician before either commit is visible to the DB.
-    Returns True if lock acquired (caller may proceed), False if someone else
-    holds it (caller should re-score and pick second-best technician).
-    """
-    try:
-        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        ok = await r.set(f"palei:tech_slot_lock:{technician_id}", "1", nx=True, ex=ttl_seconds)
-        await r.aclose()
-        return bool(ok)
-    except Exception as exc:
-        logger.warning(f"[TECH-LOCK] Redis lock failed for tech {technician_id}: {exc} — allowing through")
-        return True  # fail-open
-
-
-async def _release_tech_slot_lock(technician_id: str) -> None:
-    try:
-        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        await r.delete(f"palei:tech_slot_lock:{technician_id}")
-        await r.aclose()
-    except Exception as exc:
-        logger.warning(f"[TECH-LOCK] Redis lock release failed for tech {technician_id}: {exc}")
-
-
-# ════════════════════════════════════════════════════════════════════════════════
 #  WATCHER REGISTRY — Fix B
 # ════════════════════════════════════════════════════════════════════════════════
 
@@ -398,18 +366,7 @@ async def _apply_assignment(
     # Fix D — hard cap
     safe_timeout = min(response_timeout_minutes, MAX_RESPONSE_MINUTES)
 
-    # Per-technician slot lock: prevents two concurrent auto-assign tasks from
-    # both committing the same technician to different bookings simultaneously.
-    # Short TTL (8s) — just long enough for the DB commit to complete.
-    _tech_lock_acquired = await _acquire_tech_slot_lock(str(technician.id))
-    if not _tech_lock_acquired:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Technician {technician.name} is being assigned to another booking simultaneously — retry in a moment."
-        )
-
-    try:
-        booking.technician_id = technician.id
+    booking.technician_id = technician.id
     _RESET_TO_ASSIGNED = {BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED, BookingStatus.ACCEPTED}
     if booking.status in _RESET_TO_ASSIGNED:
         booking.status = BookingStatus.ASSIGNED
@@ -427,11 +384,9 @@ async def _apply_assignment(
     )
     db.add(new_assignment)
     await _add_booking_log(db, booking, assigned_by, notes or f"{assignment_type.value.title()} assignment created")
-        await db.commit()
-        await db.refresh(booking)
-        await db.refresh(new_assignment)
-    finally:
-        await _release_tech_slot_lock(str(technician.id))
+    await db.commit()
+    await db.refresh(booking)
+    await db.refresh(new_assignment)
 
     # ── Resolve address once for WS + FCM ────────────────────────────────────
     addr_str, resolved_lat, resolved_lng = await _resolve_address(db, booking)

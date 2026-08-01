@@ -214,30 +214,10 @@ async def update_status(
     await db.commit()
 
     # When a technician comes online, try to assign any pending auto-assign bookings
-    # Only sweep if within dispatch window (8 AM – 11 PM IST) to avoid
-    # midnight assignments when a technician goes online late at night.
     if payload.is_online and was_offline:
-        from app.api.v1.routes.bookings import _sweep_pending_auto_assign, _is_dispatch_window
+        from app.api.v1.routes.bookings import _sweep_pending_auto_assign
         from app.core.background_tasks import track_task
-        from app.core.database import get_db as _get_db
-        # Quick synchronous time check (no DB needed for default window)
-        import asyncio as _asyncio
-        _in_window = _asyncio.ensure_future(_is_dispatch_window())
-
-        async def _conditional_sweep(user_id: str) -> None:
-            in_win = await _in_window
-            if in_win:
-                await _sweep_pending_auto_assign(user_id)
-            else:
-                import logging as _lg
-                from datetime import datetime, timezone, timedelta
-                _IST = timezone(timedelta(hours=5, minutes=30))
-                _lg.getLogger(__name__).info(
-                    f"Technician came online outside dispatch window "
-                    f"({datetime.now(_IST).hour:02d}:xx IST) — sweep deferred to 8 AM"
-                )
-
-        track_task(_conditional_sweep(current_user["user_id"]))
+        track_task(_sweep_pending_auto_assign(current_user["user_id"]))
 
     return success_response(
         data={"is_online": tech.is_online},

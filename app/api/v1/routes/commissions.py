@@ -268,27 +268,32 @@ async def pay_commission(commission_id: UUID, current_user: dict = Depends(Admin
     c.status = "PAID"
     c.payout_date = now
 
-    # Credit the technician's wallet
+    # Credit the technician's wallet — get-or-create so new technicians are never skipped
     wallet = (await db.execute(
         select(Wallet).where(Wallet.technician_id == c.technician_id)
     )).scalar_one_or_none()
-    if wallet:
-        balance_before = wallet.balance or 0
-        wallet.balance = round(balance_before + (c.commission_amount or 0), 2)
-        wallet.total_earned = round((wallet.total_earned or 0) + (c.commission_amount or 0), 2)
-        db.add(WalletTransaction(
-            wallet_id=wallet.id,
-            transaction_type="CREDIT",
-            amount=c.commission_amount or 0,
-            balance_before=balance_before,
-            balance_after=wallet.balance,
-            description=f"Commission paid: {c.item_name or c.item_type or 'Commission'}",
-            reference_id=str(c.booking_id) if c.booking_id else None,
-            status="SUCCESS",
-        ))
+    if not wallet:
+        wallet = Wallet(technician_id=c.technician_id, balance=0.0,
+                        total_earned=0.0, total_withdrawn=0.0)
+        db.add(wallet)
+        await db.flush()  # get wallet.id before using it in WalletTransaction
+
+    balance_before = wallet.balance or 0
+    wallet.balance = round(balance_before + (c.commission_amount or 0), 2)
+    wallet.total_earned = round((wallet.total_earned or 0) + (c.commission_amount or 0), 2)
+    db.add(WalletTransaction(
+        wallet_id=wallet.id,
+        transaction_type="CREDIT",
+        amount=c.commission_amount or 0,
+        balance_before=balance_before,
+        balance_after=wallet.balance,
+        description=f"Commission paid: {c.item_name or c.item_type or 'Commission'}",
+        reference_id=str(c.booking_id) if c.booking_id else None,
+        status="SUCCESS",
+    ))
 
     await db.commit()
-    return success_response(data={"new_balance": round(wallet.balance, 2) if wallet else None}, message="Commission marked as paid and wallet credited")
+    return success_response(data={"new_balance": round(wallet.balance, 2)}, message="Commission marked as paid and wallet credited")
 
 
 @router.post("/bulk-approve", summary="Bulk approve PENDING commissions [Admin]")
@@ -326,6 +331,7 @@ async def bulk_pay(
     now = datetime.now(timezone.utc)
 
     # Group by technician so we do one wallet lookup per tech
+    # get-or-create wallet — never silently skip a technician without a wallet
     tech_wallet_map: dict = {}
     for c in items:
         c.status = "PAID"
@@ -333,22 +339,26 @@ async def bulk_pay(
         tid = str(c.technician_id)
         if tid not in tech_wallet_map:
             w = (await db.execute(select(Wallet).where(Wallet.technician_id == c.technician_id))).scalar_one_or_none()
+            if not w:
+                w = Wallet(technician_id=c.technician_id, balance=0.0,
+                           total_earned=0.0, total_withdrawn=0.0)
+                db.add(w)
+                await db.flush()  # get w.id for WalletTransaction FK
             tech_wallet_map[tid] = w
         wallet = tech_wallet_map[tid]
-        if wallet:
-            balance_before = wallet.balance or 0
-            wallet.balance = round(balance_before + (c.commission_amount or 0), 2)
-            wallet.total_earned = round((wallet.total_earned or 0) + (c.commission_amount or 0), 2)
-            db.add(WalletTransaction(
-                wallet_id=wallet.id,
-                transaction_type="CREDIT",
-                amount=c.commission_amount or 0,
-                balance_before=balance_before,
-                balance_after=wallet.balance,
-                description=f"Commission paid: {c.item_name or c.item_type or 'Commission'}",
-                reference_id=str(c.booking_id) if c.booking_id else None,
-                status="SUCCESS",
-            ))
+        balance_before = wallet.balance or 0
+        wallet.balance = round(balance_before + (c.commission_amount or 0), 2)
+        wallet.total_earned = round((wallet.total_earned or 0) + (c.commission_amount or 0), 2)
+        db.add(WalletTransaction(
+            wallet_id=wallet.id,
+            transaction_type="CREDIT",
+            amount=c.commission_amount or 0,
+            balance_before=balance_before,
+            balance_after=wallet.balance,
+            description=f"Commission paid: {c.item_name or c.item_type or 'Commission'}",
+            reference_id=str(c.booking_id) if c.booking_id else None,
+            status="SUCCESS",
+        ))
 
     await db.commit()
     return success_response(data={"updated": len(items)}, message=f"{len(items)} commissions marked paid and wallets credited")

@@ -933,12 +933,110 @@ ALTER TABLE commissions DROP COLUMN IF EXISTS updated_at;
     except Exception as e:
         print(f"[WARN] safe_db_patches: {e}")
 
+
+async def _backfill_technician_wallets():
+    """
+    Startup backfill — runs once per restart, fully idempotent:
+    1. Creates a zero-balance wallet for every technician who doesn't have one.
+    2. For any Commission row that is PAID but whose credit is NOT reflected in
+       the wallet (wallet balance < expected from PAID commissions), re-credits
+       the missing amount and logs a WalletTransaction so the history is correct.
+
+    This covers the window where pay_commission silently skipped the credit
+    because the wallet didn't exist yet.
+    """
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.models.technician import Technician
+        from app.models.wallet import Wallet, WalletTransaction
+        from app.models.commission import Commission
+        from sqlalchemy import select, func
+        from datetime import datetime, timezone
+
+        async with AsyncSessionLocal() as db:
+            # ── Step 1: create missing wallets ──────────────────────────────
+            techs = (await db.execute(select(Technician))).scalars().all()
+            created = 0
+            for tech in techs:
+                w = (await db.execute(
+                    select(Wallet).where(Wallet.technician_id == tech.id)
+                )).scalar_one_or_none()
+                if not w:
+                    db.add(Wallet(technician_id=tech.id, balance=0.0,
+                                  total_earned=0.0, total_withdrawn=0.0))
+                    created += 1
+            if created:
+                await db.flush()
+                print(f"[OK] backfill_wallets: created {created} missing wallet(s)")
+
+            # ── Step 2: re-credit PAID commissions that wallet never received ─
+            # For each technician, sum all PAID commission_amounts and compare to
+            # sum of CREDIT wallet transactions referencing those commissions.
+            # We detect the gap via wallet_transactions: if a PAID commission row
+            # has no matching WalletTransaction with description containing its
+            # item_name/booking_id, we re-credit it.
+            #
+            # Simpler safe approach: find PAID commissions where the technician's
+            # wallet total_earned < sum(PAID commissions) for that technician.
+            # Re-credit the difference once, tagged as backfill.
+
+            paid_rows = (await db.execute(
+                select(Commission).where(Commission.status == "PAID")
+            )).scalars().all()
+
+            # Group by technician
+            from collections import defaultdict
+            by_tech = defaultdict(list)
+            for c in paid_rows:
+                by_tech[str(c.technician_id)].append(c)
+
+            recredited = 0
+            for tid_str, comms in by_tech.items():
+                from uuid import UUID
+                tid = UUID(tid_str)
+                wallet = (await db.execute(
+                    select(Wallet).where(Wallet.technician_id == tid)
+                )).scalar_one_or_none()
+                if not wallet:
+                    continue  # just created above — will be correct going forward
+
+                expected_earned = round(sum(c.commission_amount or 0 for c in comms), 2)
+                actual_earned   = round(float(wallet.total_earned or 0), 2)
+
+                gap = round(expected_earned - actual_earned, 2)
+                if gap > 0:
+                    # Wallet is missing some credits — top it up
+                    balance_before = wallet.balance or 0
+                    wallet.balance      = round(balance_before + gap, 2)
+                    wallet.total_earned = round(actual_earned   + gap, 2)
+                    db.add(WalletTransaction(
+                        wallet_id=wallet.id,
+                        transaction_type="CREDIT",
+                        amount=gap,
+                        balance_before=balance_before,
+                        balance_after=wallet.balance,
+                        description=f"[BACKFILL] Re-credit ₹{gap} for {len(comms)} PAID commission(s) "
+                                    f"that were marked PAID before wallet existed",
+                        status="SUCCESS",
+                    ))
+                    recredited += 1
+                    print(f"[OK] backfill_wallets: re-credited ₹{gap} to technician {tid_str} "
+                          f"(wallet total_earned was ₹{actual_earned}, expected ₹{expected_earned})")
+
+            await db.commit()
+            if not created and not recredited:
+                print("[OK] backfill_wallets: all wallets up-to-date, nothing to do")
+
+    except Exception as e:
+        print(f"[WARN] backfill_wallets: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ─────────────────────────────────────────────
     await _auto_migrate()
     await _safe_db_patches()
     await _seed_admin()
+    await _backfill_technician_wallets()
     await start_redis_subscriber()
     import asyncio
 

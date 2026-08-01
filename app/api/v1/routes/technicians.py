@@ -206,6 +206,15 @@ async def create_technician(
         db.add(tech)
         await db.flush()
 
+        # Create wallet at zero balance — ensures pay_commission never silently skips
+        from app.models.wallet import Wallet
+        _wallet_exists = (await db.execute(
+            select(Wallet).where(Wallet.technician_id == tech.id)
+        )).scalar_one_or_none()
+        if not _wallet_exists:
+            db.add(Wallet(technician_id=tech.id, balance=0.0,
+                          total_earned=0.0, total_withdrawn=0.0))
+
         # Add skills if provided
         if payload.skills:
             for sk in payload.skills:

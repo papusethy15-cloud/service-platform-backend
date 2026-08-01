@@ -279,6 +279,19 @@ async def credit_wallet(
         reference_id=payload.reference_id,
     ))
     await db.commit()
+
+    # Notify technician's WS room that their wallet changed
+    try:
+        if payload.technician_id:
+            from app.websocket.manager import publish_event, WSEvent, technician_room
+            await publish_event(
+                room=technician_room(payload.technician_id),
+                event_type=WSEvent.WALLET_UPDATED,
+                payload={"balance": w.balance, "reason": "credit", "amount": payload.amount},
+            )
+    except Exception:
+        pass
+
     return success_response(data={"balance": w.balance}, message="Wallet credited")
 
 
@@ -468,6 +481,23 @@ async def admin_review_withdrawal(
     wr.reviewed_at = now
 
     await db.commit()
+
+    # ── Notify technician via WebSocket ────────────────────────────────────
+    try:
+        from app.websocket.manager import publish_event, WSEvent, technician_room
+        await publish_event(
+            room=technician_room(str(wr.technician_id)),
+            event_type=WSEvent.WITHDRAWAL_UPDATED,
+            payload={
+                "withdrawal_id": str(wr.id),
+                "status": wr.status,
+                "amount": wr.amount,
+                "admin_notes": wr.admin_notes,
+                "payment_reference": wr.payment_reference,
+            },
+        )
+    except Exception:
+        pass
 
     # ── Push notification to the technician ─────────────────────────────
     try:

@@ -447,25 +447,36 @@ async def _apply_assignment(
         logger.warning(f"FCM push failed (non-critical): {fcm_err}")
 
     # ── Notification record ───────────────────────────────────────────────────
+    # Eagerly capture scalar IDs before any potential session rollback
+    _asgn_id_str    = str(new_assignment.id)
+    _booking_id_str = str(booking.id)
+    _booking_num    = booking.booking_number
+
     try:
         from app.models.notification import Notification as _Notif
+        from datetime import datetime, timezone as _tz
         db.add(_Notif(
             user_id=technician.user_id,
             title="New Job Assigned 🔧",
-            body=f"You have a new job for booking {booking.booking_number}. Tap to view.",
+            body=f"You have a new job for booking {_booking_num}. Tap to view.",
             channel="PUSH",
             is_read=False,
+            created_at=datetime.now(_tz.utc),
             data={
                 "type": "ASSIGNMENT_CREATED",
                 "notification_type": "ASSIGNMENT",
-                "booking_id": str(booking.id),
-                "assignment_id": str(new_assignment.id),
-                "booking_number": booking.booking_number,
+                "booking_id": _booking_id_str,
+                "assignment_id": _asgn_id_str,
+                "booking_number": _booking_num,
             },
         ))
         await db.commit()
     except Exception as notif_err:
         logger.warning(f"Notification record save failed (non-critical): {notif_err}")
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     return new_assignment
 
@@ -729,15 +740,43 @@ async def _redispatch(
             logger.warning(f"[REDISPATCH] Exhaustion check failed: {ee}")
 
 
-def _start_watcher(assignment: AssignmentHistory) -> None:
-    """Convenience: create watcher task and register it in the registry."""
+def _start_watcher_from_ids(
+    assignment_id: str,
+    booking_id: str,
+    technician_id: str,
+    deadline,
+) -> None:
+    """Start watcher from raw string IDs — safe to call after session rollback."""
     task = asyncio.ensure_future(_two_phase_watcher(
-        str(assignment.id),
-        str(assignment.booking_id),
-        str(assignment.technician_id),
-        assignment.response_deadline,
+        assignment_id,
+        booking_id,
+        technician_id,
+        deadline,
     ))
-    _register_watcher(str(assignment.booking_id), task)
+    _register_watcher(booking_id, task)
+
+
+def _start_watcher(assignment: AssignmentHistory) -> None:
+    """Convenience wrapper — reads IDs from SQLAlchemy instance state dict
+    (not via instrumented attribute access) to avoid lazy-loading on a
+    rolled-back session.
+    """
+    from sqlalchemy import inspect as _sa_inspect
+    state = _sa_inspect(assignment)
+    # Read from committed/pending state without triggering lazy load
+    def _get(key):
+        hist = state.attrs[key].history
+        # history.added has the pending value; if committed, use dict_
+        val = (hist.added or [None])[0]
+        if val is None:
+            val = state.dict.get(key)
+        return val
+
+    _asgn_id       = str(_get("id"))
+    _booking_id    = str(_get("booking_id"))
+    _technician_id = str(_get("technician_id"))
+    _deadline      = _get("response_deadline")
+    _start_watcher_from_ids(_asgn_id, _booking_id, _technician_id, _deadline)
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -858,12 +897,13 @@ async def manual_assign(
         await _release_assign_lock(booking_id_str)
 
     # Fix B+C: register new two-phase watcher
+    # IDs are captured here while the ORM object is still fresh and not expired.
     _start_watcher(new_asgn)
 
     return success_response(
         data={
-            "booking_id":        str(booking.id),
-            "technician_id":     str(technician.id),
+            "booking_id":        booking_id_str,
+            "technician_id":     payload.technician_id,
             "technician_name":   technician.name,
             "assignment_id":     str(new_asgn.id),
             "response_deadline": iso(new_asgn.response_deadline),

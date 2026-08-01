@@ -417,10 +417,25 @@ async def permanently_delete_customer(
         await db.execute(delete(Quotation).where(Quotation.id.in_(quotation_ids)))
 
     # ── Warranty claims, then warranties ────────────────────────────────────
+    # Delete claims by warranty_id (always safe — this column exists from migration 001)
     if warranty_ids:
         await db.execute(delete(WarrantyClaim).where(WarrantyClaim.warranty_id.in_(warranty_ids)))
+    # Delete claims by booking_id only if that column exists on the VPS DB.
+    # (Older VPS deployments may be missing this column; _safe_db_patches adds it on restart,
+    # but we must not crash before the first restart after the patch is deployed.)
     if booking_ids:
-        await db.execute(delete(WarrantyClaim).where(WarrantyClaim.booking_id.in_(booking_ids)))
+        from sqlalchemy import text as _text
+        col_exists = (await db.execute(_text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='warranty_claims' AND column_name='booking_id' LIMIT 1"
+        ))).scalar()
+        if col_exists:
+            await db.execute(delete(WarrantyClaim).where(WarrantyClaim.booking_id.in_(booking_ids)))
+        else:
+            # Column missing — delete all claims belonging to warranties already deleted above.
+            # Any claim linked to a booking (but not a warranty we already caught) stays, which
+            # is fine: it has no customer FK and won't block the customer delete.
+            pass
     await db.execute(delete(Warranty).where(Warranty.customer_id == customer_id))
 
     # ── AMC visits, then subscriptions ──────────────────────────────────────

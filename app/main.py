@@ -704,6 +704,9 @@ ALTER TABLE coupons ADD COLUMN IF NOT EXISTS per_customer_limit INTEGER;
 ALTER TABLE amc_plans ADD COLUMN IF NOT EXISTS plan_type VARCHAR(30) DEFAULT 'GOLD';
 ALTER TABLE amc_subscriptions ADD COLUMN IF NOT EXISTS visits_remaining INTEGER DEFAULT 0;
 ALTER TABLE warranties ADD COLUMN IF NOT EXISTS parts_covered TEXT;
+ALTER TABLE warranty_claims ADD COLUMN IF NOT EXISTS booking_id UUID;
+ALTER TABLE warranty_claims ADD COLUMN IF NOT EXISTS approved_by UUID;
+ALTER TABLE warranty_claims ADD COLUMN IF NOT EXISTS rejected_by UUID;
 ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS hsn_code VARCHAR(20);
 ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS city_id UUID;
 -- created_at: ensure column exists WITH default on all raw-Base tables

@@ -410,23 +410,23 @@ async def _apply_assignment(
 
     try:
         booking.technician_id = technician.id
-    _RESET_TO_ASSIGNED = {BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED, BookingStatus.ACCEPTED}
-    if booking.status in _RESET_TO_ASSIGNED:
-        booking.status = BookingStatus.ASSIGNED
+        _RESET_TO_ASSIGNED = {BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED, BookingStatus.ACCEPTED}
+        if booking.status in _RESET_TO_ASSIGNED:
+            booking.status = BookingStatus.ASSIGNED
 
-    new_assignment = AssignmentHistory(
-        booking_id=booking.id,
-        technician_id=technician.id,
-        assigned_by=UUID(assigned_by) if assigned_by else None,
-        assignment_type=assignment_type,
-        status=AssignmentStatus.ASSIGNED,
-        score=score,
-        notes=notes,
-        response_deadline=datetime.now(timezone.utc) + timedelta(minutes=safe_timeout),
-        screen_shown_at=None,
-    )
-    db.add(new_assignment)
-    await _add_booking_log(db, booking, assigned_by, notes or f"{assignment_type.value.title()} assignment created")
+        new_assignment = AssignmentHistory(
+            booking_id=booking.id,
+            technician_id=technician.id,
+            assigned_by=UUID(assigned_by) if assigned_by else None,
+            assignment_type=assignment_type,
+            status=AssignmentStatus.ASSIGNED,
+            score=score,
+            notes=notes,
+            response_deadline=datetime.now(timezone.utc) + timedelta(minutes=safe_timeout),
+            screen_shown_at=None,
+        )
+        db.add(new_assignment)
+        await _add_booking_log(db, booking, assigned_by, notes or f"{assignment_type.value.title()} assignment created")
         await db.commit()
         await db.refresh(booking)
         await db.refresh(new_assignment)

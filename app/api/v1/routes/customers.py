@@ -461,7 +461,15 @@ async def permanently_delete_customer(
         await db.execute(delete(TechnicianRating).where(TechnicianRating.booking_id.in_(booking_ids)))
         await db.execute(delete(BookingPartUsage).where(BookingPartUsage.booking_id.in_(booking_ids)))
 
-    await db.execute(delete(CouponUsage).where(CouponUsage.customer_id == customer_id))
+    # coupon_usages.customer_id was added after initial VPS migration — guard defensively
+    from sqlalchemy import text as _text2
+    cu_col_exists = (await db.execute(_text2(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name='coupon_usages' AND column_name='customer_id' LIMIT 1"
+    ))).scalar()
+    if cu_col_exists:
+        await db.execute(delete(CouponUsage).where(CouponUsage.customer_id == customer_id))
+    # else: coupon_usages by booking_id already deleted above; customer-level ones stay (harmless)
     await db.execute(delete(TechnicianRating).where(TechnicianRating.customer_id == customer_id))
 
     # ── CRM records ──────────────────────────────────────────────────────────

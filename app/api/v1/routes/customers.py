@@ -335,8 +335,28 @@ async def permanently_delete_customer(
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    # ── Safe model imports: each wrapped so a missing table on this deployment
-    # doesn't crash the entire delete (bibek-backend may have fewer migrations). ──
+    from sqlalchemy import text as _sql_text
+
+    async def _safe(label: str, coro):
+        """
+        Execute a DB coroutine inside a SAVEPOINT so that if the SQL fails
+        (missing table, missing column, FK issue) we ROLLBACK TO that savepoint
+        instead of aborting the whole transaction.
+        """
+        if coro is None:
+            return None
+        sp = f"sp_{label}"
+        await db.execute(_sql_text(f"SAVEPOINT {sp}"))
+        try:
+            result = await coro
+            await db.execute(_sql_text(f"RELEASE SAVEPOINT {sp}"))
+            return result
+        except Exception as _e:
+            print(f"[WARN] customer delete: step '{label}' skipped ({type(_e).__name__}: {_e})", flush=True)
+            await db.execute(_sql_text(f"ROLLBACK TO SAVEPOINT {sp}"))
+            return None
+
+    # ── All model imports (always available — core models) ─────────────────
     from app.models.booking import Booking, BookingStatusLog
     from app.models.quotation import (
         Quotation, QuotationServiceItem, QuotationPartItem,
@@ -354,43 +374,7 @@ async def permanently_delete_customer(
     from app.models.appliance import CustomerAppliance, ApplianceServiceHistory
     from app.models.notification import Notification
 
-    # Optional models — tables may not exist on all deployments
-    try:
-        from app.models.payment import CashCollectionRecord
-        _has_cash_collection = True
-    except ImportError:
-        _has_cash_collection = False
-
-    try:
-        from app.models.sla import SLABreach
-        _has_sla = True
-    except ImportError:
-        _has_sla = False
-
-    try:
-        from app.models.escalation import Escalation
-        _has_escalation = True
-    except ImportError:
-        _has_escalation = False
-
-    try:
-        from app.models.inventory import StockMovement, TechnicianStockLog, DirectSale, BookingPartUsage
-        _has_inventory = True
-    except ImportError:
-        _has_inventory = False
-
-    try:
-        from app.models.amc import AMCSubscription, AMCVisit
-        _has_amc = True
-    except ImportError:
-        _has_amc = False
-
-    try:
-        from app.models.crm import CRMNote, CRMFollowup, CRMTask
-        _has_crm = True
-    except ImportError:
-        _has_crm = False
-
+    # ── Collect IDs first (all reads — no writes yet, transaction still clean) ─
     booking_ids = (await db.execute(
         select(Booking.id).where(Booking.customer_id == customer_id)
     )).scalars().all()
@@ -405,173 +389,234 @@ async def permanently_delete_customer(
         select(Warranty.id).where(Warranty.customer_id == customer_id)
     )).scalars().all()
 
-    amc_sub_ids = []
-    if _has_amc:
-        amc_sub_ids = (await db.execute(
-            select(AMCSubscription.id).where(AMCSubscription.customer_id == customer_id)
-        )).scalars().all()
-
     appliance_ids = (await db.execute(
         select(CustomerAppliance.id).where(CustomerAppliance.customer_id == customer_id)
     )).scalars().all()
 
     user = (await db.execute(select(User).where(User.id == customer.user_id))).scalar_one_or_none()
 
-    # ── Preserve ledger/payroll rows that don't belong to the customer ──────
+    # ── Unlink ledger rows (preserve payroll/stock history) ─────────────────
     if booking_ids:
-        await db.execute(update(Commission).where(Commission.booking_id.in_(booking_ids)).values(booking_id=None))
-        if _has_inventory:
-            await db.execute(update(StockMovement).where(StockMovement.booking_id.in_(booking_ids)).values(booking_id=None))
-            await db.execute(update(TechnicianStockLog).where(TechnicianStockLog.booking_id.in_(booking_ids)).values(booking_id=None))
-            await db.execute(update(DirectSale).where(DirectSale.booking_id.in_(booking_ids)).values(booking_id=None))
-    if _has_inventory:
-        await db.execute(update(DirectSale).where(DirectSale.customer_id == customer_id).values(customer_id=None))
+        await _safe("commission_unlink", db.execute(
+            update(Commission).where(Commission.booking_id.in_(booking_ids)).values(booking_id=None)
+        ))
+        await _safe("stock_movement_unlink", db.execute(
+            _sql_text("UPDATE stock_movements SET booking_id = NULL WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+        await _safe("tech_stock_log_unlink", db.execute(
+            _sql_text("UPDATE technician_stock_logs SET booking_id = NULL WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+        await _safe("direct_sale_booking_unlink", db.execute(
+            _sql_text("UPDATE direct_sales SET booking_id = NULL WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+    await _safe("direct_sale_customer_unlink", db.execute(
+        _sql_text("UPDATE direct_sales SET customer_id = NULL WHERE customer_id = :cid"),
+        {"cid": customer_id}
+    ))
 
-    # ── Quotation children + self-reference, then quotations themselves ────
+    # ── Quotation children ────────────────────────────────────────────────
     if quotation_ids:
-        await db.execute(update(Quotation).where(Quotation.original_quotation_id.in_(quotation_ids)).values(original_quotation_id=None))
-        await db.execute(delete(QuotationServiceItem).where(QuotationServiceItem.quotation_id.in_(quotation_ids)))
-        await db.execute(delete(QuotationPartItem).where(QuotationPartItem.quotation_id.in_(quotation_ids)))
-        await db.execute(delete(QuotationStatusLog).where(QuotationStatusLog.quotation_id.in_(quotation_ids)))
-        await db.execute(delete(QuotationAppliance).where(QuotationAppliance.quotation_id.in_(quotation_ids)))
+        await _safe("quotation_self_ref", db.execute(
+            update(Quotation).where(Quotation.original_quotation_id.in_(quotation_ids)).values(original_quotation_id=None)
+        ))
+        await _safe("quotation_svc_items", db.execute(
+            delete(QuotationServiceItem).where(QuotationServiceItem.quotation_id.in_(quotation_ids))
+        ))
+        await _safe("quotation_part_items", db.execute(
+            delete(QuotationPartItem).where(QuotationPartItem.quotation_id.in_(quotation_ids))
+        ))
+        await _safe("quotation_status_logs", db.execute(
+            delete(QuotationStatusLog).where(QuotationStatusLog.quotation_id.in_(quotation_ids))
+        ))
+        await _safe("quotation_appliances", db.execute(
+            delete(QuotationAppliance).where(QuotationAppliance.quotation_id.in_(quotation_ids))
+        ))
 
-    # ── Payments / cash collection / refunds (must go before invoices) ─────
+    # ── Payments / cash collection / refunds ─────────────────────────────
     if booking_ids:
-        payment_ids = (await db.execute(
+        payment_id_rows = (await db.execute(
             select(PaymentTransaction.id).where(PaymentTransaction.booking_id.in_(booking_ids))
         )).scalars().all()
-        if payment_ids:
-            if _has_cash_collection:
-                await db.execute(delete(CashCollectionRecord).where(CashCollectionRecord.payment_transaction_id.in_(payment_ids)))
-            await db.execute(delete(Refund).where(Refund.payment_id.in_(payment_ids)))
-        await db.execute(delete(Refund).where(Refund.booking_id.in_(booking_ids)))
-        await db.execute(delete(PaymentTransaction).where(PaymentTransaction.booking_id.in_(booking_ids)))
+        if payment_id_rows:
+            await _safe("cash_collection", db.execute(
+                _sql_text("DELETE FROM cash_collection_records WHERE payment_transaction_id = ANY(:ids)"),
+                {"ids": list(payment_id_rows)}
+            ))
+            await _safe("refund_by_payment", db.execute(
+                delete(Refund).where(Refund.payment_id.in_(payment_id_rows))
+            ))
+        await _safe("refund_by_booking", db.execute(
+            delete(Refund).where(Refund.booking_id.in_(booking_ids))
+        ))
+        await _safe("payments", db.execute(
+            delete(PaymentTransaction).where(PaymentTransaction.booking_id.in_(booking_ids))
+        ))
 
-    # ── Invoices (must go before quotations, since invoice.quotation_id is NOT NULL) ─
+    # ── Invoices → Quotations ─────────────────────────────────────────────
     if booking_ids:
-        await db.execute(delete(Invoice).where(Invoice.booking_id.in_(booking_ids)))
+        await _safe("invoices", db.execute(
+            delete(Invoice).where(Invoice.booking_id.in_(booking_ids))
+        ))
     if quotation_ids:
-        await db.execute(delete(Quotation).where(Quotation.id.in_(quotation_ids)))
+        await _safe("quotations", db.execute(
+            delete(Quotation).where(Quotation.id.in_(quotation_ids))
+        ))
 
-    # ── Warranty claims, then warranties ────────────────────────────────────
-    # Delete claims by warranty_id (always safe — this column exists from migration 001)
+    # ── Warranty claims + warranties ─────────────────────────────────────
     if warranty_ids:
-        await db.execute(delete(WarrantyClaim).where(WarrantyClaim.warranty_id.in_(warranty_ids)))
-    # Delete claims by booking_id only if that column exists on the VPS DB.
-    # (Older VPS deployments may be missing this column; _safe_db_patches adds it on restart,
-    # but we must not crash before the first restart after the patch is deployed.)
+        await _safe("warranty_claims_by_warranty", db.execute(
+            delete(WarrantyClaim).where(WarrantyClaim.warranty_id.in_(warranty_ids))
+        ))
     if booking_ids:
-        from sqlalchemy import text as _text
-        col_exists = (await db.execute(_text(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name='warranty_claims' AND column_name='booking_id' LIMIT 1"
-        ))).scalar()
-        if col_exists:
-            await db.execute(delete(WarrantyClaim).where(WarrantyClaim.booking_id.in_(booking_ids)))
-        else:
-            # Column missing — delete all claims belonging to warranties already deleted above.
-            # Any claim linked to a booking (but not a warranty we already caught) stays, which
-            # is fine: it has no customer FK and won't block the customer delete.
-            pass
-    await db.execute(delete(Warranty).where(Warranty.customer_id == customer_id))
+        await _safe("warranty_claims_by_booking", db.execute(
+            _sql_text("DELETE FROM warranty_claims WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+    await _safe("warranties", db.execute(
+        delete(Warranty).where(Warranty.customer_id == customer_id)
+    ))
 
-    # ── AMC visits, then subscriptions ──────────────────────────────────────
-    if _has_amc:
-        if amc_sub_ids:
-            await db.execute(delete(AMCVisit).where(AMCVisit.amc_id.in_(amc_sub_ids)))
-        await db.execute(delete(AMCSubscription).where(AMCSubscription.customer_id == customer_id))
+    # ── AMC ───────────────────────────────────────────────────────────────
+    amc_sub_id_rows = []
+    try:
+        amc_sub_id_rows = (await db.execute(
+            _sql_text("SELECT id FROM amc_subscriptions WHERE customer_id = :cid"),
+            {"cid": customer_id}
+        )).scalars().all()
+    except Exception:
+        pass
+    if amc_sub_id_rows:
+        await _safe("amc_visits", db.execute(
+            _sql_text("DELETE FROM amc_visits WHERE amc_id = ANY(:ids)"),
+            {"ids": list(amc_sub_id_rows)}
+        ))
+    await _safe("amc_subscriptions", db.execute(
+        _sql_text("DELETE FROM amc_subscriptions WHERE customer_id = :cid"),
+        {"cid": customer_id}
+    ))
 
-    # ── Customer appliances + their service history ────────────────────────
+    # ── Appliances ────────────────────────────────────────────────────────
     if appliance_ids:
-        await db.execute(delete(ApplianceServiceHistory).where(ApplianceServiceHistory.appliance_id.in_(appliance_ids)))
+        await _safe("appliance_svc_history_by_appliance", db.execute(
+            delete(ApplianceServiceHistory).where(ApplianceServiceHistory.appliance_id.in_(appliance_ids))
+        ))
     if booking_ids:
-        await db.execute(delete(ApplianceServiceHistory).where(ApplianceServiceHistory.booking_id.in_(booking_ids)))
-    await db.execute(delete(CustomerAppliance).where(CustomerAppliance.customer_id == customer_id))
+        await _safe("appliance_svc_history_by_booking", db.execute(
+            delete(ApplianceServiceHistory).where(ApplianceServiceHistory.booking_id.in_(booking_ids))
+        ))
+    await _safe("customer_appliances", db.execute(
+        delete(CustomerAppliance).where(CustomerAppliance.customer_id == customer_id)
+    ))
 
-    # ── Misc booking-linked records ─────────────────────────────────────────
+    # ── Misc booking-linked records ───────────────────────────────────────
     if booking_ids:
-        await db.execute(delete(BookingStatusLog).where(BookingStatusLog.booking_id.in_(booking_ids)))
-        await db.execute(delete(AssignmentHistory).where(AssignmentHistory.booking_id.in_(booking_ids)))
-        await db.execute(delete(TrackingLocation).where(TrackingLocation.booking_id.in_(booking_ids)))
-        if _has_sla:
-            await db.execute(delete(SLABreach).where(SLABreach.booking_id.in_(booking_ids)))
-        if _has_escalation:
-            await db.execute(delete(Escalation).where(Escalation.booking_id.in_(booking_ids)))
-        await db.execute(delete(CouponUsage).where(CouponUsage.booking_id.in_(booking_ids)))
-        await db.execute(delete(TechnicianRating).where(TechnicianRating.booking_id.in_(booking_ids)))
-        if _has_inventory:
-            await db.execute(delete(BookingPartUsage).where(BookingPartUsage.booking_id.in_(booking_ids)))
+        await _safe("booking_status_logs", db.execute(
+            delete(BookingStatusLog).where(BookingStatusLog.booking_id.in_(booking_ids))
+        ))
+        await _safe("assignment_history", db.execute(
+            delete(AssignmentHistory).where(AssignmentHistory.booking_id.in_(booking_ids))
+        ))
+        await _safe("tracking_locations", db.execute(
+            delete(TrackingLocation).where(TrackingLocation.booking_id.in_(booking_ids))
+        ))
+        await _safe("sla_breaches", db.execute(
+            _sql_text("DELETE FROM sla_breaches WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+        await _safe("escalations", db.execute(
+            _sql_text("DELETE FROM escalations WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
+        await _safe("coupon_usages_by_booking", db.execute(
+            delete(CouponUsage).where(CouponUsage.booking_id.in_(booking_ids))
+        ))
+        await _safe("tech_ratings_by_booking", db.execute(
+            delete(TechnicianRating).where(TechnicianRating.booking_id.in_(booking_ids))
+        ))
+        await _safe("booking_part_usages", db.execute(
+            _sql_text("DELETE FROM booking_part_usages WHERE booking_id = ANY(:ids)"),
+            {"ids": list(booking_ids)}
+        ))
 
-    # coupon_usages.customer_id was added after initial VPS migration — guard defensively
-    from sqlalchemy import text as _text2
-    cu_col_exists = (await db.execute(_text2(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_name='coupon_usages' AND column_name='customer_id' LIMIT 1"
-    ))).scalar()
-    if cu_col_exists:
-        await db.execute(delete(CouponUsage).where(CouponUsage.customer_id == customer_id))
-    # else: coupon_usages by booking_id already deleted above; customer-level ones stay (harmless)
-    await db.execute(delete(TechnicianRating).where(TechnicianRating.customer_id == customer_id))
+    await _safe("coupon_usages_by_customer", db.execute(
+        _sql_text("DELETE FROM coupon_usages WHERE customer_id = :cid"),
+        {"cid": customer_id}
+    ))
+    await _safe("tech_ratings_by_customer", db.execute(
+        delete(TechnicianRating).where(TechnicianRating.customer_id == customer_id)
+    ))
 
-    # ── CRM records ──────────────────────────────────────────────────────────
-    if _has_crm:
-        await db.execute(delete(CRMNote).where(CRMNote.customer_id == customer_id))
-        await db.execute(delete(CRMFollowup).where(CRMFollowup.customer_id == customer_id))
-        await db.execute(delete(CRMTask).where(CRMTask.customer_id == customer_id))
+    # ── CRM ───────────────────────────────────────────────────────────────
+    await _safe("crm_notes", db.execute(
+        _sql_text("DELETE FROM crm_notes WHERE customer_id = :cid"), {"cid": customer_id}
+    ))
+    await _safe("crm_followups", db.execute(
+        _sql_text("DELETE FROM crm_followups WHERE customer_id = :cid"), {"cid": customer_id}
+    ))
+    await _safe("crm_tasks", db.execute(
+        _sql_text("DELETE FROM crm_tasks WHERE customer_id = :cid"), {"cid": customer_id}
+    ))
 
-    # ── Bookings themselves ─────────────────────────────────────────────────
+    # ── Bookings themselves ───────────────────────────────────────────────
     if booking_ids:
-        await db.execute(delete(Booking).where(Booking.id.in_(booking_ids)))
+        await _safe("bookings", db.execute(
+            delete(Booking).where(Booking.id.in_(booking_ids))
+        ))
 
-    # ── Customer addresses, notifications ───────────────────────────────────
-    await db.execute(delete(CustomerAddress).where(CustomerAddress.customer_id == customer_id))
+    # ── Customer addresses + notifications ────────────────────────────────
+    await _safe("customer_addresses", db.execute(
+        delete(CustomerAddress).where(CustomerAddress.customer_id == customer_id)
+    ))
     if user:
-        await db.execute(delete(Notification).where(Notification.user_id == user.id))
+        await _safe("notifications", db.execute(
+            delete(Notification).where(Notification.user_id == user.id)
+        ))
 
-    # ── Wallet + wallet transactions (must go before user delete) ─────────
-    # wallets.user_id FK blocks user deletion — delete wallet_transactions first
-    # (wallet_transactions.wallet_id FK), then wallets, then the user.
+    # ── Wallets ───────────────────────────────────────────────────────────
     if user:
         from app.models.wallet import Wallet, WalletTransaction
-        wallet_ids = (await db.execute(
+        wallet_id_rows = (await db.execute(
             select(Wallet.id).where(Wallet.user_id == user.id)
         )).scalars().all()
-        if wallet_ids:
-            await db.execute(delete(WalletTransaction).where(WalletTransaction.wallet_id.in_(wallet_ids)))
-        await db.execute(delete(Wallet).where(Wallet.user_id == user.id))
-
-    # ── Referrals (referral_codes, referrals, referral_rewards) ──────────
-    # Guarded: these tables may not exist on all deployments (added in later migrations)
-    if user:
-        try:
-            from app.models.referral import ReferralCode, Referral, ReferralReward
-            referral_ids = (await db.execute(
-                select(Referral.id).where(
-                    (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
-                )
-            )).scalars().all()
-            if referral_ids:
-                await db.execute(delete(ReferralReward).where(ReferralReward.referral_id.in_(referral_ids)))
-            await db.execute(delete(Referral).where(
-                (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
+        if wallet_id_rows:
+            await _safe("wallet_transactions", db.execute(
+                delete(WalletTransaction).where(WalletTransaction.wallet_id.in_(wallet_id_rows))
             ))
-            await db.execute(delete(ReferralReward).where(ReferralReward.user_id == user.id))
-            await db.execute(delete(ReferralCode).where(ReferralCode.user_id == user.id))
-        except Exception:
-            # referral tables not present on this deployment — safe to skip
-            pass
+        await _safe("wallets", db.execute(
+            delete(Wallet).where(Wallet.user_id == user.id)
+        ))
 
-    # ── RBAC: user_permissions ────────────────────────────────────────────
+    # ── Referrals ─────────────────────────────────────────────────────────
     if user:
-        try:
-            from app.models.rbac import UserPermission
-            await db.execute(delete(UserPermission).where(UserPermission.user_id == user.id))
-        except Exception:
-            # rbac tables not present on this deployment — safe to skip
-            pass
+        await _safe("referral_rewards_by_user", db.execute(
+            _sql_text("DELETE FROM referral_rewards WHERE user_id = :uid"), {"uid": user.id}
+        ))
+        await _safe("referral_rewards_by_referral", db.execute(
+            _sql_text("""
+                DELETE FROM referral_rewards WHERE referral_id IN (
+                    SELECT id FROM referrals
+                    WHERE referrer_id = :uid OR referred_id = :uid
+                )
+            """), {"uid": user.id}
+        ))
+        await _safe("referrals", db.execute(
+            _sql_text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
+            {"uid": user.id}
+        ))
+        await _safe("referral_codes", db.execute(
+            _sql_text("DELETE FROM referral_codes WHERE user_id = :uid"), {"uid": user.id}
+        ))
 
-    # Best-effort Firebase Auth cleanup -- don't block DB cleanup if this
-    # fails (e.g. SDK not configured, UID already gone), but surface it.
+    # ── RBAC ──────────────────────────────────────────────────────────────
+    if user:
+        await _safe("user_permissions", db.execute(
+            _sql_text("DELETE FROM user_permissions WHERE user_id = :uid"), {"uid": user.id}
+        ))
+
+    # ── Firebase Auth cleanup (best-effort, non-blocking) ─────────────────
     firebase_warning = None
     if user and user.firebase_uid:
         try:
@@ -589,6 +634,7 @@ async def permanently_delete_customer(
         except Exception as e:
             firebase_warning = f"Firebase Auth deletion failed ({e}) -- you may need to remove this user manually in the Firebase console."
 
+    # ── Finally: delete the customer + user rows ──────────────────────────
     await db.delete(customer)
     if user:
         await db.delete(user)

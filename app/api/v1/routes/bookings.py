@@ -227,6 +227,19 @@ async def _request_cancellation(db: AsyncSession, booking: Booking, user_id: str
         pass
 
 # ── AUTO-ASSIGN HELPER ────────────────────────────────────────
+
+async def _is_dispatch_window(db=None) -> bool:
+    """
+    Returns True if current IST time is within the dispatch window (8 AM – 11 PM IST).
+    db param accepted but unused — kept for call-site compatibility.
+    Window is intentionally wide so technicians assigned at 10:55 PM still get the job.
+    """
+    from datetime import datetime, timezone, timedelta
+    _IST = timezone(timedelta(hours=5, minutes=30))
+    hour = datetime.now(_IST).hour
+    return 8 <= hour < 23   # 8:00 AM to 10:59 PM IST
+
+
 async def _maybe_auto_assign(booking_id_str: str, booking_number: str, triggered_by_user_id: str) -> None:
     """
     Background task: check auto_assign_enabled setting and, if ON, assign

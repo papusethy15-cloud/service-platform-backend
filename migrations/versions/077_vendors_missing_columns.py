@@ -22,7 +22,7 @@ def _col_exists(conn, table, column):
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
 
     vendor_cols = [
         ("contact_person", "VARCHAR(150)"),
@@ -42,6 +42,6 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
     for col in ("contact_person", "mobile", "email", "gstin", "address"):
         conn.execute(sa.text(f"ALTER TABLE vendors DROP COLUMN IF EXISTS {col}"))

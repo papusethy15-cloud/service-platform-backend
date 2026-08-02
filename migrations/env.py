@@ -39,7 +39,7 @@ async def _ensure_baseline_async():
     """
     # The revision BEFORE the first migration that was NOT yet applied
     # to the legacy VPS DB when Alembic was first introduced.
-    BASELINE_STAMP = "070"
+    BASELINE_STAMP = "080"  # updated: stamp at current head so legacy DBs skip all migrations
 
     engine = create_async_engine(_DB_URL, poolclass=pool.NullPool)
     try:

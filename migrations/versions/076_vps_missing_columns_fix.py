@@ -22,7 +22,7 @@ def _col_exists(conn, table, column):
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
 
     # ── Fix 1: inventory_items.gst_percent ─────────────────────────────────
     if not _col_exists(conn, "inventory_items", "gst_percent"):
@@ -52,7 +52,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
     conn.execute(sa.text("ALTER TABLE inventory_items DROP COLUMN IF EXISTS gst_percent"))
     for col in ("contact_person", "mobile", "email", "gstin", "address"):
         conn.execute(sa.text(f"ALTER TABLE vendors DROP COLUMN IF EXISTS {col}"))

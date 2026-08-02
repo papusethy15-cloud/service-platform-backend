@@ -15,15 +15,15 @@ branch_labels = None
 depends_on = None
 
 
-def _table_exists(bind, table_name: str) -> bool:
-    result = bind.execute(text(
+def _table_exists(conn, table_name: str) -> bool:
+    result = conn.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :t)"
     ), {"t": table_name})
     return result.scalar()
 
 
-def _column_exists(bind, table_name: str, column_name: str) -> bool:
-    result = bind.execute(text(
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    result = conn.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
         "WHERE table_name = :t AND column_name = :c)"
     ), {"t": table_name, "c": column_name})
@@ -32,10 +32,10 @@ def _column_exists(bind, table_name: str, column_name: str) -> bool:
 
 def upgrade():
     from sqlalchemy import text as _t
-    bind = op.get_bind()
+    conn = op.get_context().connection
 
     # ── 1. CCO Attendance table ───────────────────────────────────────────────
-    if not _table_exists(bind, 'cco_attendance'):
+    if not _table_exists(conn, 'cco_attendance'):
         op.create_table(
             'cco_attendance',
             sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,
@@ -57,7 +57,7 @@ def upgrade():
         print("[INFO] 073: cco_attendance already exists — skipping create")
 
     # ── 2. CCO Salary Settlements table ──────────────────────────────────────
-    if not _table_exists(bind, 'cco_salary_settlements'):
+    if not _table_exists(conn, 'cco_salary_settlements'):
         op.create_table(
             'cco_salary_settlements',
             sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True,

@@ -19,7 +19,7 @@ depends_on = None
 def upgrade() -> None:
     """Add extended profile columns to technicians table.
     Uses raw SQL with IF NOT EXISTS so it is safe to re-run."""
-    conn = op.get_bind()
+    conn = op.get_context().connection
 
     new_columns = [
         # (column_name,  DDL_type_string,                             default)
@@ -53,7 +53,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
+    conn = op.get_context().connection
     cols = [
         'alternate_mobile', 'dob', 'gender', 'pincode',
         'identity_type', 'identity_number',

@@ -16,9 +16,9 @@ depends_on = None
 
 
 def upgrade():
-    bind = op.get_bind()
+    conn = op.get_context().connection
     from sqlalchemy import text as _text
-    exists = bind.execute(_text(
+    exists = conn.execute(_text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='salary_settlements')"
     )).scalar()
     if exists:

@@ -38,7 +38,7 @@ def _table_exists(conn, table):
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
 
     if not _table_exists(conn, "wallets"):
         print("[SKIP] wallets table does not exist — skipping wallet fixes")
@@ -116,7 +116,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
     # Only drop what we added — don't remove user_id if data exists
     # (downgrade is rarely used in production; just document the intent)
     print("[INFO] Downgrade 078: no-op (manual cleanup required if needed)")

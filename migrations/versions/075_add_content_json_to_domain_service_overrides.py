@@ -14,7 +14,7 @@ depends_on = None
 
 
 def upgrade():
-    conn = op.get_bind()
+    conn = op.get_context().connection
 
     for col in ('includes_json', 'excludes_json', 'faqs_json'):
         exists = conn.execute(sa.text(

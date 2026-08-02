@@ -92,7 +92,13 @@ async def _auto_migrate():
 
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        await loop.run_in_executor(pool, _run_alembic_upgrade)
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(pool, _run_alembic_upgrade),
+                timeout=60,   # never hang startup for more than 60s
+            )
+        except asyncio.TimeoutError:
+            print("[WARN] Auto-migrate: timed out after 60s — skipping (DB may already be at head)", flush=True)
 
 
 async def _seed_admin():

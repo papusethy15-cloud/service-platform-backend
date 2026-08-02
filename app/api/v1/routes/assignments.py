@@ -654,7 +654,9 @@ async def _two_phase_watcher(
 
     # ── Phase 2: wait remaining time until response_deadline ─────────────────
     now = datetime.now(timezone.utc)
-    remaining = (response_deadline - now).total_seconds()
+    # response_deadline from DB may be naive (no tzinfo) — normalise to UTC-aware
+    _deadline_aware = response_deadline if response_deadline.tzinfo else response_deadline.replace(tzinfo=timezone.utc)
+    remaining = (_deadline_aware - now).total_seconds()
     if remaining > 0:
         try:
             await asyncio.sleep(remaining)
@@ -1028,7 +1030,7 @@ async def respond_to_assignment(
             action == "ACCEPT"
             and asgn.status == AssignmentStatus.TIMEOUT
             and asgn.response_deadline is not None
-            and (datetime.now(timezone.utc) - asgn.response_deadline).total_seconds() <= 300
+            and (datetime.now(timezone.utc) - (asgn.response_deadline if asgn.response_deadline.tzinfo else asgn.response_deadline.replace(tzinfo=timezone.utc))).total_seconds() <= 300
         )
         if not _grace_ok:
             raise HTTPException(status_code=400, detail=f"Assignment is already {asgn.status.value.lower()}")

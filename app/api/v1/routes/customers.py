@@ -335,27 +335,61 @@ async def permanently_delete_customer(
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
+    # ── Safe model imports: each wrapped so a missing table on this deployment
+    # doesn't crash the entire delete (bibek-backend may have fewer migrations). ──
     from app.models.booking import Booking, BookingStatusLog
     from app.models.quotation import (
         Quotation, QuotationServiceItem, QuotationPartItem,
         QuotationStatusLog, QuotationAppliance,
     )
     from app.models.invoice import Invoice
-    from app.models.payment import PaymentTransaction, CashCollectionRecord
+    from app.models.payment import PaymentTransaction
     from app.models.refund import Refund
     from app.models.assignment import AssignmentHistory
     from app.models.tracking import TrackingLocation
-    from app.models.sla import SLABreach
-    from app.models.escalation import Escalation
     from app.models.commission import Commission
     from app.models.coupon import CouponUsage
     from app.models.warranty import Warranty, WarrantyClaim
     from app.models.technician import TechnicianRating
     from app.models.appliance import CustomerAppliance, ApplianceServiceHistory
-    from app.models.inventory import StockMovement, TechnicianStockLog, DirectSale, BookingPartUsage
-    from app.models.amc import AMCSubscription, AMCVisit
-    from app.models.crm import CRMNote, CRMFollowup, CRMTask
     from app.models.notification import Notification
+
+    # Optional models — tables may not exist on all deployments
+    try:
+        from app.models.payment import CashCollectionRecord
+        _has_cash_collection = True
+    except ImportError:
+        _has_cash_collection = False
+
+    try:
+        from app.models.sla import SLABreach
+        _has_sla = True
+    except ImportError:
+        _has_sla = False
+
+    try:
+        from app.models.escalation import Escalation
+        _has_escalation = True
+    except ImportError:
+        _has_escalation = False
+
+    try:
+        from app.models.inventory import StockMovement, TechnicianStockLog, DirectSale, BookingPartUsage
+        _has_inventory = True
+    except ImportError:
+        _has_inventory = False
+
+    try:
+        from app.models.amc import AMCSubscription, AMCVisit
+        _has_amc = True
+    except ImportError:
+        _has_amc = False
+
+    try:
+        from app.models.crm import CRMNote, CRMFollowup, CRMTask
+        _has_crm = True
+    except ImportError:
+        _has_crm = False
 
     booking_ids = (await db.execute(
         select(Booking.id).where(Booking.customer_id == customer_id)
@@ -371,9 +405,11 @@ async def permanently_delete_customer(
         select(Warranty.id).where(Warranty.customer_id == customer_id)
     )).scalars().all()
 
-    amc_sub_ids = (await db.execute(
-        select(AMCSubscription.id).where(AMCSubscription.customer_id == customer_id)
-    )).scalars().all()
+    amc_sub_ids = []
+    if _has_amc:
+        amc_sub_ids = (await db.execute(
+            select(AMCSubscription.id).where(AMCSubscription.customer_id == customer_id)
+        )).scalars().all()
 
     appliance_ids = (await db.execute(
         select(CustomerAppliance.id).where(CustomerAppliance.customer_id == customer_id)
@@ -382,14 +418,14 @@ async def permanently_delete_customer(
     user = (await db.execute(select(User).where(User.id == customer.user_id))).scalar_one_or_none()
 
     # ── Preserve ledger/payroll rows that don't belong to the customer ──────
-    # Unlink instead of deleting so technician payouts & stock accounting
-    # stay intact.
     if booking_ids:
         await db.execute(update(Commission).where(Commission.booking_id.in_(booking_ids)).values(booking_id=None))
-        await db.execute(update(StockMovement).where(StockMovement.booking_id.in_(booking_ids)).values(booking_id=None))
-        await db.execute(update(TechnicianStockLog).where(TechnicianStockLog.booking_id.in_(booking_ids)).values(booking_id=None))
-        await db.execute(update(DirectSale).where(DirectSale.booking_id.in_(booking_ids)).values(booking_id=None))
-    await db.execute(update(DirectSale).where(DirectSale.customer_id == customer_id).values(customer_id=None))
+        if _has_inventory:
+            await db.execute(update(StockMovement).where(StockMovement.booking_id.in_(booking_ids)).values(booking_id=None))
+            await db.execute(update(TechnicianStockLog).where(TechnicianStockLog.booking_id.in_(booking_ids)).values(booking_id=None))
+            await db.execute(update(DirectSale).where(DirectSale.booking_id.in_(booking_ids)).values(booking_id=None))
+    if _has_inventory:
+        await db.execute(update(DirectSale).where(DirectSale.customer_id == customer_id).values(customer_id=None))
 
     # ── Quotation children + self-reference, then quotations themselves ────
     if quotation_ids:
@@ -405,7 +441,8 @@ async def permanently_delete_customer(
             select(PaymentTransaction.id).where(PaymentTransaction.booking_id.in_(booking_ids))
         )).scalars().all()
         if payment_ids:
-            await db.execute(delete(CashCollectionRecord).where(CashCollectionRecord.payment_transaction_id.in_(payment_ids)))
+            if _has_cash_collection:
+                await db.execute(delete(CashCollectionRecord).where(CashCollectionRecord.payment_transaction_id.in_(payment_ids)))
             await db.execute(delete(Refund).where(Refund.payment_id.in_(payment_ids)))
         await db.execute(delete(Refund).where(Refund.booking_id.in_(booking_ids)))
         await db.execute(delete(PaymentTransaction).where(PaymentTransaction.booking_id.in_(booking_ids)))
@@ -439,9 +476,10 @@ async def permanently_delete_customer(
     await db.execute(delete(Warranty).where(Warranty.customer_id == customer_id))
 
     # ── AMC visits, then subscriptions ──────────────────────────────────────
-    if amc_sub_ids:
-        await db.execute(delete(AMCVisit).where(AMCVisit.amc_id.in_(amc_sub_ids)))
-    await db.execute(delete(AMCSubscription).where(AMCSubscription.customer_id == customer_id))
+    if _has_amc:
+        if amc_sub_ids:
+            await db.execute(delete(AMCVisit).where(AMCVisit.amc_id.in_(amc_sub_ids)))
+        await db.execute(delete(AMCSubscription).where(AMCSubscription.customer_id == customer_id))
 
     # ── Customer appliances + their service history ────────────────────────
     if appliance_ids:
@@ -455,11 +493,14 @@ async def permanently_delete_customer(
         await db.execute(delete(BookingStatusLog).where(BookingStatusLog.booking_id.in_(booking_ids)))
         await db.execute(delete(AssignmentHistory).where(AssignmentHistory.booking_id.in_(booking_ids)))
         await db.execute(delete(TrackingLocation).where(TrackingLocation.booking_id.in_(booking_ids)))
-        await db.execute(delete(SLABreach).where(SLABreach.booking_id.in_(booking_ids)))
-        await db.execute(delete(Escalation).where(Escalation.booking_id.in_(booking_ids)))
+        if _has_sla:
+            await db.execute(delete(SLABreach).where(SLABreach.booking_id.in_(booking_ids)))
+        if _has_escalation:
+            await db.execute(delete(Escalation).where(Escalation.booking_id.in_(booking_ids)))
         await db.execute(delete(CouponUsage).where(CouponUsage.booking_id.in_(booking_ids)))
         await db.execute(delete(TechnicianRating).where(TechnicianRating.booking_id.in_(booking_ids)))
-        await db.execute(delete(BookingPartUsage).where(BookingPartUsage.booking_id.in_(booking_ids)))
+        if _has_inventory:
+            await db.execute(delete(BookingPartUsage).where(BookingPartUsage.booking_id.in_(booking_ids)))
 
     # coupon_usages.customer_id was added after initial VPS migration — guard defensively
     from sqlalchemy import text as _text2
@@ -473,9 +514,10 @@ async def permanently_delete_customer(
     await db.execute(delete(TechnicianRating).where(TechnicianRating.customer_id == customer_id))
 
     # ── CRM records ──────────────────────────────────────────────────────────
-    await db.execute(delete(CRMNote).where(CRMNote.customer_id == customer_id))
-    await db.execute(delete(CRMFollowup).where(CRMFollowup.customer_id == customer_id))
-    await db.execute(delete(CRMTask).where(CRMTask.customer_id == customer_id))
+    if _has_crm:
+        await db.execute(delete(CRMNote).where(CRMNote.customer_id == customer_id))
+        await db.execute(delete(CRMFollowup).where(CRMFollowup.customer_id == customer_id))
+        await db.execute(delete(CRMTask).where(CRMTask.customer_id == customer_id))
 
     # ── Bookings themselves ─────────────────────────────────────────────────
     if booking_ids:

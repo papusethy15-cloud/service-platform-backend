@@ -1264,8 +1264,9 @@ app.include_router(ws_router)  # WebSocket endpoints (no prefix — uses /ws/...
 # present on the request object by the time we return a JSONResponse — but we
 # add them explicitly here as a belt-and-suspenders safety net so the browser
 # always receives them, even during a crash.
-from fastapi import Request
+from fastapi import Request, Depends
 from fastapi.responses import JSONResponse
+from app.api.deps import get_current_user
 
 def _cors_headers(request: Request) -> dict:
     """Return CORS headers for the request's origin if it is in the allowed list."""
@@ -1290,6 +1291,7 @@ from sqlalchemy.exc import IntegrityError as _SAIntegrityError
 async def _integrity_error_handler(request: Request, exc: _SAIntegrityError) -> JSONResponse:
     import logging
     logging.getLogger("uvicorn.error").warning("IntegrityError on %s: %s", request.url.path, exc.orig)
+    print(f"[WARN] IntegrityError on {request.url.path}: {exc.orig}", flush=True)
     detail_raw = str(exc.orig) if exc.orig else str(exc)
     # Produce a friendly message based on the constraint name
     if "users_mobile_key" in detail_raw or ("mobile" in detail_raw and "unique" in detail_raw.lower()):
@@ -1329,17 +1331,40 @@ async def _validation_exception_handler_cors(request: Request, exc: _RequestVali
         response.headers[k] = v
     return response
 
+# In-memory ring buffer for the last 20 unhandled errors (queryable via /admin/last-errors)
+import collections as _collections
+_last_errors: _collections.deque = _collections.deque(maxlen=20)
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    import logging, traceback
-    logging.getLogger("uvicorn.error").error(
-        "Unhandled exception: %s\n%s", exc, traceback.format_exc()
-    )
+    import logging, traceback, datetime
+    tb = traceback.format_exc()
+    msg = f"Unhandled exception on {request.method} {request.url.path}: {exc}\n{tb}"
+    # Log to stderr (uvicorn.error) AND stdout (print) so PM2 out.log always captures it
+    logging.getLogger("uvicorn.error").error(msg)
+    print(f"[ERROR] {msg}", flush=True)
+    # Store in ring buffer for /admin/last-errors
+    _last_errors.append({
+        "time": datetime.datetime.utcnow().isoformat(),
+        "method": request.method,
+        "path": str(request.url.path),
+        "error": str(exc),
+        "traceback": tb,
+    })
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
         headers=_cors_headers(request),
     )
+
+@app.get("/admin/last-errors", include_in_schema=False)
+async def _get_last_errors(current_user: dict = Depends(get_current_user)):
+    """Temporary debug endpoint — returns the last 20 unhandled 500 errors (Admin only)."""
+    from app.api.deps import AdminOnly
+    if current_user.get("role") not in ("ADMIN", "SUPER_ADMIN"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Admin only")
+    return {"errors": list(_last_errors)}
 
 
 @app.get("/health")

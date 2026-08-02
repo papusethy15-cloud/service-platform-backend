@@ -978,6 +978,23 @@ CREATE TABLE IF NOT EXISTS referral_rewards (
     is_active BOOLEAN DEFAULT TRUE
 );
 
+-- ── REFERRALS: add referred_id column if missing (column renamed in later migration) ─
+ALTER TABLE referrals ADD COLUMN IF NOT EXISTS referred_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+-- ── INVENTORY: booking_part_usage table (no trailing s — matches model __tablename__) ─
+CREATE TABLE IF NOT EXISTS booking_part_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    item_id UUID NOT NULL,
+    technician_id UUID,
+    warehouse_id UUID,
+    quantity INTEGER NOT NULL,
+    unit_cost FLOAT DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
 -- ── RBAC: permissions / roles / user_permissions (added in later migrations) ─
 CREATE TABLE IF NOT EXISTS permissions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

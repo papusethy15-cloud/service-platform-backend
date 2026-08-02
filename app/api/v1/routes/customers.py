@@ -537,7 +537,7 @@ async def permanently_delete_customer(
             delete(TechnicianRating).where(TechnicianRating.booking_id.in_(booking_ids))
         ))
         await _safe("booking_part_usages", db.execute(
-            _sql_text("DELETE FROM booking_part_usages WHERE booking_id = ANY(:ids)"),
+            _sql_text("DELETE FROM booking_part_usage WHERE booking_id = ANY(:ids)"),
             {"ids": list(booking_ids)}
         ))
 
@@ -597,13 +597,25 @@ async def permanently_delete_customer(
         await _safe("referral_rewards_by_referral", db.execute(
             _sql_text("""
                 DELETE FROM referral_rewards WHERE referral_id IN (
-                    SELECT id FROM referrals
-                    WHERE referrer_id = :uid OR referred_id = :uid
+                    SELECT id FROM referrals WHERE referrer_id = :uid
                 )
             """), {"uid": user.id}
         ))
-        await _safe("referrals", db.execute(
-            _sql_text("DELETE FROM referrals WHERE referrer_id = :uid OR referred_id = :uid"),
+        # Also catch rewards linked via referred_id if that column exists
+        await _safe("referral_rewards_by_referred", db.execute(
+            _sql_text("""
+                DELETE FROM referral_rewards WHERE referral_id IN (
+                    SELECT id FROM referrals
+                    WHERE referred_id = :uid
+                )
+            """), {"uid": user.id}
+        ))
+        await _safe("referrals_as_referrer", db.execute(
+            _sql_text("DELETE FROM referrals WHERE referrer_id = :uid"),
+            {"uid": user.id}
+        ))
+        await _safe("referrals_as_referred", db.execute(
+            _sql_text("DELETE FROM referrals WHERE referred_id = :uid"),
             {"uid": user.id}
         ))
         await _safe("referral_codes", db.execute(

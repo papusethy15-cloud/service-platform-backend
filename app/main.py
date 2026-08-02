@@ -1212,7 +1212,10 @@ async def lifespan(app: FastAPI):
     await _safe_db_patches()
     await _seed_admin()
     await _backfill_technician_wallets()
-    await start_redis_subscriber()
+    try:
+        await start_redis_subscriber()
+    except Exception as _redis_err:
+        print(f"[WARN] Redis subscriber failed to start: {_redis_err} — WS pub/sub disabled, app continues")
     import asyncio
 
     # BUG FIX: these were previously fired with asyncio.ensure_future() and

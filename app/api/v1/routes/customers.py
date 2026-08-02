@@ -499,25 +499,34 @@ async def permanently_delete_customer(
         await db.execute(delete(Wallet).where(Wallet.user_id == user.id))
 
     # ── Referrals (referral_codes, referrals, referral_rewards) ──────────
+    # Guarded: these tables may not exist on all deployments (added in later migrations)
     if user:
-        from app.models.referral import ReferralCode, Referral, ReferralReward
-        referral_ids = (await db.execute(
-            select(Referral.id).where(
+        try:
+            from app.models.referral import ReferralCode, Referral, ReferralReward
+            referral_ids = (await db.execute(
+                select(Referral.id).where(
+                    (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
+                )
+            )).scalars().all()
+            if referral_ids:
+                await db.execute(delete(ReferralReward).where(ReferralReward.referral_id.in_(referral_ids)))
+            await db.execute(delete(Referral).where(
                 (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
-            )
-        )).scalars().all()
-        if referral_ids:
-            await db.execute(delete(ReferralReward).where(ReferralReward.referral_id.in_(referral_ids)))
-        await db.execute(delete(Referral).where(
-            (Referral.referrer_id == user.id) | (Referral.referred_id == user.id)
-        ))
-        await db.execute(delete(ReferralReward).where(ReferralReward.user_id == user.id))
-        await db.execute(delete(ReferralCode).where(ReferralCode.user_id == user.id))
+            ))
+            await db.execute(delete(ReferralReward).where(ReferralReward.user_id == user.id))
+            await db.execute(delete(ReferralCode).where(ReferralCode.user_id == user.id))
+        except Exception:
+            # referral tables not present on this deployment — safe to skip
+            pass
 
     # ── RBAC: user_permissions ────────────────────────────────────────────
     if user:
-        from app.models.rbac import UserPermission
-        await db.execute(delete(UserPermission).where(UserPermission.user_id == user.id))
+        try:
+            from app.models.rbac import UserPermission
+            await db.execute(delete(UserPermission).where(UserPermission.user_id == user.id))
+        except Exception:
+            # rbac tables not present on this deployment — safe to skip
+            pass
 
     # Best-effort Firebase Auth cleanup -- don't block DB cleanup if this
     # fails (e.g. SDK not configured, UID already gone), but surface it.

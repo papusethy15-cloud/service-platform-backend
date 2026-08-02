@@ -155,7 +155,24 @@ async def send_booking_push(
         return True
 
     except Exception as e:
+        err_str = str(e)
         logger.error(f"FCM: Failed to send booking push (assignment={assignment_id}): {e}")
+        # Auto-clear stale/unregistered FCM tokens from DB to stop repeat failures
+        if any(k in err_str for k in ("NOT_FOUND", "UNREGISTERED", "NotRegistered")):
+            try:
+                from app.core.database import AsyncSessionLocal
+                from app.models.technician import Technician
+                from sqlalchemy import update as sa_update
+                async with AsyncSessionLocal() as _db:
+                    await _db.execute(
+                        sa_update(Technician)
+                        .where(Technician.fcm_token == fcm_token)
+                        .values(fcm_token=None)
+                    )
+                    await _db.commit()
+                logger.info(f"FCM: Cleared stale FCM token (assignment={assignment_id})")
+            except Exception as _ce:
+                logger.warning(f"FCM: Could not clear stale token: {_ce}")
         return False
 
 
@@ -180,5 +197,21 @@ async def send_simple_push(fcm_token: str, title: str, body: str, data: dict = N
         await loop.run_in_executor(None, lambda: fcm_messaging.send(message))
         return True
     except Exception as e:
+        err_str = str(e)
         logger.error(f"FCM: Failed to send simple push: {e}")
+        if any(k in err_str for k in ("NOT_FOUND", "UNREGISTERED", "NotRegistered")) and fcm_token:
+            try:
+                from app.core.database import AsyncSessionLocal
+                from app.models.technician import Technician
+                from sqlalchemy import update as sa_update
+                async with AsyncSessionLocal() as _db:
+                    await _db.execute(
+                        sa_update(Technician)
+                        .where(Technician.fcm_token == fcm_token)
+                        .values(fcm_token=None)
+                    )
+                    await _db.commit()
+                logger.info("FCM: Cleared stale FCM token (simple push)")
+            except Exception as _ce:
+                logger.warning(f"FCM: Could not clear stale token: {_ce}")
         return False

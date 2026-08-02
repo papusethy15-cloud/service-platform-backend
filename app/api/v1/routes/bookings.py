@@ -1504,7 +1504,8 @@ async def patch_booking_address_geo(
         "latitude": lat, "longitude": lng, "location_source": source,
     }, message="Location saved successfully")
 
-@router.patch("/{booking_id}/reschedule", summary="Reschedule booking")
+@router.post("/{booking_id}/reschedule", summary="Reschedule booking")
+@router.patch("/{booking_id}/reschedule", summary="Reschedule booking (PATCH alias)")
 async def reschedule_booking(booking_id: UUID, payload: RescheduleBookingRequest, current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
     booking = await _get_booking_or_404(db, booking_id)
     from datetime import datetime as _dt2, date as _date2

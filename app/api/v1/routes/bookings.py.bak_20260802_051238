@@ -760,51 +760,6 @@ async def create_booking(
     return success_response(data={"id": str(booking.id), "booking_number": booking.booking_number, "status": booking.status.value}, message="Booking created")
 
 # ── SLOT SUMMARY ───────────────────────────────────────────────
-
-@router.get("/today-summary", summary="Admin ops summary strip for today [Admin/CCO]")
-async def today_summary(
-    current_user: dict = Depends(AdminOrCCO),
-    db: AsyncSession = Depends(get_db),
-):
-    """Returns a quick ops summary for the bookings page header strip."""
-    from sqlalchemy import cast as _cast, Date as _SADate, func as _func, case as _sa_case
-    from datetime import datetime, timezone, timedelta
-    _IST = timezone(timedelta(hours=5, minutes=30))
-    _today = datetime.now(_IST).date()
-
-    ACTIVE_STATUSES = [
-        BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED,
-        BookingStatus.ACCEPTED, BookingStatus.TECHNICIAN_ACCEPTED,
-        BookingStatus.EN_ROUTE, BookingStatus.ARRIVED, BookingStatus.INSPECTING,
-        BookingStatus.IN_PROGRESS, BookingStatus.PENDING_VERIFICATION,
-        BookingStatus.INVOICE_GENERATED, BookingStatus.PAYMENT_PENDING,
-    ]
-
-    today_q = select(Booking).where(
-        _cast(Booking.scheduled_date, _SADate) == _today
-    )
-    today_bookings = (await db.execute(today_q)).scalars().all()
-
-    total_today       = len(today_bookings)
-    urgent_count      = sum(1 for b in today_bookings if b.priority == "URGENT")
-    unassigned_count  = sum(1 for b in today_bookings if not b.technician_id and b.status in ACTIVE_STATUSES)
-    cancel_pending    = sum(1 for b in today_bookings if b.status == BookingStatus.CANCELLATION_REQUESTED)
-    overdue_count     = (await db.execute(
-        select(_func.count(Booking.id)).where(
-            _cast(Booking.scheduled_date, _SADate) < _today,
-            Booking.status.in_(ACTIVE_STATUSES),
-        )
-    )).scalar_one()
-
-    return success_response(data={
-        "date": str(_today),
-        "total_today": total_today,
-        "urgent_count": urgent_count,
-        "unassigned_count": unassigned_count,
-        "cancel_pending": cancel_pending,
-        "overdue_count": overdue_count,
-    })
-
 @router.get("/slot-summary", summary="Slot booking counts for a date [Admin/CCO]")
 async def slot_summary(
     date: str = Query(..., description="YYYY-MM-DD"),
@@ -923,13 +878,11 @@ async def list_bookings(
     date_from: str = Query(None),
     date_to: str = Query(None),
     customer_id: str = Query(None),
-    sort_by: str = Query("smart", description="smart|created_at|scheduled_date|priority|status"),
-    sort_order: str = Query("asc", description="asc|desc"),
     current_user: dict = Depends(AnyAuthenticated),
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.service import Service
-    from sqlalchemy import or_, and_, cast, String as SAString, case as sa_case, Date as SADate
+    from sqlalchemy import or_, and_, cast, String as SAString
     from datetime import datetime
 
     # Build base query with LEFT JOINs for customer, service, technician, domain, city
@@ -1007,53 +960,8 @@ async def list_bookings(
         id_rows = (await db.execute(q.with_only_columns(Booking.id))).all()
         total = len(id_rows)
 
-    # ── Smart sort: urgency rank + scheduled date + priority, overridable ──
-    STATUS_URGENCY = sa_case(
-        (Booking.status == BookingStatus.CANCELLATION_REQUESTED, 1),
-        (Booking.status == BookingStatus.PENDING,      2),
-        (Booking.status == BookingStatus.CONFIRMED,    3),
-        (Booking.status == BookingStatus.ASSIGNED,     4),
-        (Booking.status == BookingStatus.ACCEPTED,     5),
-        (Booking.status == BookingStatus.TECHNICIAN_ACCEPTED, 6),
-        (Booking.status == BookingStatus.EN_ROUTE,     7),
-        (Booking.status == BookingStatus.ARRIVED,      8),
-        (Booking.status == BookingStatus.INSPECTING,   9),
-        (Booking.status == BookingStatus.IN_PROGRESS,  10),
-        (Booking.status == BookingStatus.PENDING_VERIFICATION, 11),
-        (Booking.status == BookingStatus.COMPLETED,    12),
-        (Booking.status == BookingStatus.INVOICE_GENERATED, 13),
-        (Booking.status == BookingStatus.PAYMENT_PENDING, 14),
-        else_=99,
-    )
-    PRIORITY_URGENCY = sa_case(
-        (Booking.priority == "URGENT", 1),
-        (Booking.priority == "HIGH",   2),
-        else_=3,
-    )
-    _desc = sort_order.lower() == "desc"
-    if sort_by == "scheduled_date":
-        _ord = Booking.scheduled_date.desc() if _desc else Booking.scheduled_date.asc().nulls_last()
-    elif sort_by == "created_at":
-        _ord = Booking.created_at.desc() if _desc else Booking.created_at.asc()
-    elif sort_by == "priority":
-        _ord = PRIORITY_URGENCY.desc() if _desc else PRIORITY_URGENCY.asc()
-    elif sort_by == "status":
-        _ord = STATUS_URGENCY.desc() if _desc else STATUS_URGENCY.asc()
-    else:  # "smart" default
-        _ord = None  # handled below as multi-column
-
-    if _ord is not None:
-        _q_final = q.order_by(_ord, Booking.created_at.desc())
-    else:
-        _q_final = q.order_by(
-            cast(Booking.scheduled_date, SADate).asc().nulls_last(),
-            STATUS_URGENCY.asc(),
-            PRIORITY_URGENCY.asc(),
-            Booking.created_at.desc(),
-        )
-
     rows = (await db.execute(
-        _q_final.offset((page-1)*per_page).limit(per_page)
+        q.order_by(Booking.created_at.desc()).offset((page-1)*per_page).limit(per_page)
     )).all()
 
     items = []
@@ -1087,15 +995,6 @@ async def list_bookings(
             "coupon_discount": b.coupon_discount or 0.0,
             "domain_name": domain.name if domain else None,
             "created_at": iso(b.created_at) if b.created_at else None,
-            # is_overdue: scheduled date is in the past and booking is still active
-            "is_overdue": (
-                b.scheduled_date is not None
-                and b.scheduled_date.date() < __import__('datetime').date.today()
-                and b.status.value not in (
-                    "COMPLETED", "CANCELLED", "CLOSED", "PAID", "SETTLED",
-                    "CANCELLATION_REQUESTED", "RESCHEDULED",
-                )
-            ),
         })
 
     # ── Enrich with quotation summary (batch, one query) ──────────────
@@ -1302,59 +1201,6 @@ async def track_booking(
 
 
 # ── GET BOOKING ────────────────────────────────────────────────
-
-# ── Invoice + Payment enrichment helper (used by GET /{booking_id}) ──────────
-async def _enrich_booking_invoice_payment(db: AsyncSession, booking_id) -> dict:
-    """Returns invoice and payment fields for the booking detail response."""
-    from app.models.invoice import Invoice, InvoiceStatus
-    from app.models.payment import PaymentTransaction, PaymentStatus
-    try:
-        invoices = (await db.execute(
-            select(Invoice).where(Invoice.booking_id == booking_id)
-            .order_by(Invoice.created_at.desc())
-        )).scalars().all()
-
-        payments = (await db.execute(
-            select(PaymentTransaction).where(PaymentTransaction.booking_id == booking_id)
-            .order_by(PaymentTransaction.created_at.desc())
-        )).scalars().all()
-
-        latest_inv = invoices[0] if invoices else None
-        total_paid = sum(
-            p.amount for p in payments
-            if p.status.value in ("SUCCESS", "COMPLETED", "VERIFIED")
-        )
-        total_pending = sum(
-            p.amount for p in payments
-            if p.status.value in ("PENDING",)
-        )
-
-        return {
-            "invoice_number": latest_inv.invoice_number if latest_inv else None,
-            "invoice_status": latest_inv.status.value if latest_inv else None,
-            "invoice_total": float(latest_inv.total_amount) if latest_inv else None,
-            "invoice_count": len(invoices),
-            "payments": [
-                {
-                    "method": p.method.value,
-                    "amount": float(p.amount),
-                    "status": p.status.value,
-                    "created_at": iso(p.created_at) if p.created_at else None,
-                }
-                for p in payments
-            ],
-            "total_paid": float(total_paid),
-            "total_pending": float(total_pending),
-        }
-    except Exception as _err:
-        import logging as _log
-        _log.getLogger(__name__).warning(f"_enrich_booking_invoice_payment failed: {_err}")
-        return {
-            "invoice_number": None, "invoice_status": None,
-            "invoice_total": None, "invoice_count": 0,
-            "payments": [], "total_paid": 0.0, "total_pending": 0.0,
-        }
-
 @router.get("/{booking_id}", summary="Booking details")
 async def get_booking(booking_id: UUID, current_user: dict = Depends(AnyAuthenticated), db: AsyncSession = Depends(get_db)):
     from app.models.service import Service
@@ -1426,8 +1272,6 @@ async def get_booking(booking_id: UUID, current_user: dict = Depends(AnyAuthenti
         "inspection_submitted_by": b.inspection_submitted_by,
         "pre_reschedule_status": b.pre_reschedule_status,
         "customer_rating": await _get_booking_customer_rating(db, b.id),
-        # ── Invoice + payment enrichment ──────────────────────────────────
-        **await _enrich_booking_invoice_payment(db, b.id),
     })
 
 # ── UPDATE BOOKING ─────────────────────────────────────────────

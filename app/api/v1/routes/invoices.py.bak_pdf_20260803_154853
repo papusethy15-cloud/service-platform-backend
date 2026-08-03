@@ -443,7 +443,7 @@ def _fetch_logo_reader(url: str):
     return None
 
 
-def _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj=None, cust_address=None, quotation=None) -> bytes:
+def _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj=None, cust_address=None) -> bytes:
     """
     Professional GST Tax Invoice PDF — Bibek Enterprises / Palei Solutions white-label.
 
@@ -770,17 +770,9 @@ def _build_invoice_pdf(invoice, booking, customer, domain_profile, services, par
     ]]
     sn = 1
     for s in services:
-        raw_name = s["service_name"] or ""
-        # Strip encoded "ApplLabel :: ServiceName" format from quotation storage
-        if " :: " in raw_name:
-            _parts = raw_name.split(" :: ", 1)
-            appliance_pfx = _parts[0].strip()
-            svc_only = _parts[1].strip()
-            desc = f"{svc_only} ({appliance_pfx})"
-        else:
-            desc = raw_name
-            if s.get("appliance_label"):
-                desc += f" ({s['appliance_label']})"
+        desc = s["service_name"]
+        if s.get("appliance_label"):
+            desc += f" ({s['appliance_label']})"
         rows.append([
             Paragraph(str(sn), sTDr),
             Paragraph(desc, sTD),
@@ -837,57 +829,29 @@ def _build_invoice_pdf(invoice, booking, customer, domain_profile, services, par
     igst     = float(getattr(invoice, "igst_amount",   0) or 0)
     total    = float(invoice.total_amount or 0)
     balance  = float(getattr(invoice, "balance_amount",0) or 0)
+    discount = float(getattr(invoice, "discount_amount",0) or 0)
     paid_amt = total - balance
     total_gst= cgst + sgst + igst
-
-    # Pull extra values from linked quotation (not on Invoice model)
-    _q = quotation  # may be None for legacy invoices
-    labour_charges  = float(getattr(_q, "labour_charges",  0) or 0)
-    service_charges = float(getattr(_q, "service_charges", 0) or 0)
-    discount        = float(getattr(_q, "discount_amount", 0) or 0)
-    coupon_discount = float(getattr(_q, "coupon_discount", 0) or 0)
-    coupon_code     = getattr(_q, "coupon_code", None)
-    adjustment      = float(getattr(_q, "adjustment_amount", 0) or 0)
-    tax_pct         = float(getattr(_q, "tax_percent", 18.0) or 18.0)
 
     # Determine invoice type for GST/Non-GST display
     _inv_type_raw = str(getattr(getattr(invoice, "invoice_type", None), "value", None) or
                         getattr(invoice, "invoice_type", None) or "GST_B2C")
     _is_non_gst = (_inv_type_raw == "NON_GST")
 
-    # Build services_subtotal (line items before charges)
-    _svc_items_total = sum(s["total_price"] for s in services) + sum(p["total_price"] for p in parts)
-
     tot_rows = []
-    # Show labour/service charges as separate line items if non-zero
-    if labour_charges > 0:
-        tot_rows.append([Paragraph("Labour Charges", sTLbl), Paragraph(f"INR {labour_charges:,.2f}", sTVal)])
-    if service_charges > 0:
-        tot_rows.append([Paragraph("Service Charges", sTLbl), Paragraph(f"INR {service_charges:,.2f}", sTVal)])
     tot_rows.append([Paragraph("Subtotal", sTLbl), Paragraph(f"INR {taxable:,.2f}", sTVal)])
     if discount > 0:
         tot_rows.append([Paragraph("Discount", sTDLbl), Paragraph(f"- INR {discount:,.2f}", sTDVal)])
-    if coupon_discount > 0:
-        lbl = f"Coupon ({coupon_code})" if coupon_code else "Coupon Discount"
-        tot_rows.append([Paragraph(lbl, sTDLbl), Paragraph(f"- INR {coupon_discount:,.2f}", sTDVal)])
-    if adjustment != 0:
-        adj_sign = "-" if adjustment > 0 else "+"
-        tot_rows.append([Paragraph("Adjustment", sTLbl),
-                         Paragraph(f"{adj_sign} INR {abs(adjustment):,.2f}", sTVal)])
     if not _is_non_gst:
         # Show GST breakdown only for GST invoices
-        half_pct = tax_pct / 2
         if cgst > 0:
-            tot_rows.append([Paragraph(f"CGST ({half_pct:.1f}%)", sTLbl), Paragraph(f"INR {cgst:,.2f}", sTVal)])
+            tot_rows.append([Paragraph("CGST (9%)", sTLbl), Paragraph(f"INR {cgst:,.2f}", sTVal)])
         if sgst > 0:
-            tot_rows.append([Paragraph(f"SGST ({half_pct:.1f}%)", sTLbl), Paragraph(f"INR {sgst:,.2f}", sTVal)])
+            tot_rows.append([Paragraph("SGST (9%)", sTLbl), Paragraph(f"INR {sgst:,.2f}", sTVal)])
         if igst > 0:
             tot_rows.append([Paragraph("IGST (18%)", sTLbl), Paragraph(f"INR {igst:,.2f}", sTVal)])
         elif total_gst > 0 and not (cgst or sgst):
             tot_rows.append([Paragraph("GST", sTLbl), Paragraph(f"INR {total_gst:,.2f}", sTVal)])
-    else:
-        # Non-GST invoice — show a note
-        tot_rows.append([Paragraph("Tax", sTLbl), Paragraph("NIL (Non-Taxable)", sTVal)])
     # Grand total
     tot_rows.append([Paragraph("TOTAL", sTGLbl), Paragraph(f"INR {total:,.2f}", sTGVal)])
 
@@ -1110,15 +1074,8 @@ async def get_invoice_pdf(
     except Exception:
         cust_address = None
 
-    # Also fetch the quotation for labour_charges, service_charges, coupon_discount, discount, adjustment
-    quotation_for_pdf = None
-    if invoice.quotation_id:
-        quotation_for_pdf = (await db.execute(
-            select(Quotation).where(Quotation.id == invoice.quotation_id)
-        )).scalar_one_or_none()
-
     try:
-        pdf_bytes = _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj, cust_address, quotation_for_pdf)
+        pdf_bytes = _build_invoice_pdf(invoice, booking, customer, domain_profile, services, parts, domain_obj, cust_address)
     except Exception:
         logger.exception("Premium invoice PDF generation failed, falling back to plain layout")
         buffer = BytesIO()

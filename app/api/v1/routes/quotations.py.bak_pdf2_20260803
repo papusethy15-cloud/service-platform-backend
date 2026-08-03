@@ -2486,20 +2486,11 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     ]]
     idx = 1
     for s in services:
-        raw_name = (getattr(s, "service_name", None) or
-                    getattr(s, "custom_service_name", None) or "Service")
-        # Decode "ApplLabel :: ServiceName" format stored during booking
-        if " :: " in raw_name:
-            _appl, _svc = raw_name.split(" :: ", 1)
-            svc_display = f"{_svc.strip()} ({_appl.strip()})"
-        else:
-            svc_display = raw_name
-            _appl_lbl = getattr(s, "appliance_label", None)
-            if _appl_lbl and _appl_lbl not in svc_display:
-                svc_display = f"{svc_display} ({_appl_lbl})"
+        name = (getattr(s, "service_name", None) or
+                getattr(s, "custom_service_name", None) or "Service")
         rows.append([
             Paragraph(str(idx), sTDr),
-            Paragraph(svc_display, sTD),
+            Paragraph(name, sTD),
             Paragraph("Service", sTD),
             Paragraph(str(s.quantity), sTDr),
             Paragraph(f"{float(s.unit_price):,.2f}", sTDr),
@@ -2517,32 +2508,8 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
             Paragraph(f"{float(p.total_price):,.2f}", sTDbr),
         ])
         idx += 1
-    # Labour & service charges as dedicated line items
-    _labour_chrg  = float(getattr(quotation, "labour_charges",  0) or 0)
-    _service_chrg = float(getattr(quotation, "service_charges", 0) or 0)
-    if _labour_chrg > 0:
-        rows.append([
-            Paragraph(str(idx), sTDr),
-            Paragraph("Labour Charges", sTD),
-            Paragraph("Labour", sTD),
-            Paragraph("1", sTDr),
-            Paragraph(f"{_labour_chrg:,.2f}", sTDr),
-            Paragraph(f"{_labour_chrg:,.2f}", sTDbr),
-        ])
-        idx += 1
-    if _service_chrg > 0:
-        rows.append([
-            Paragraph(str(idx), sTDr),
-            Paragraph("Service Charges", sTD),
-            Paragraph("Service", sTD),
-            Paragraph("1", sTDr),
-            Paragraph(f"{_service_chrg:,.2f}", sTDr),
-            Paragraph(f"{_service_chrg:,.2f}", sTDbr),
-        ])
-        idx += 1
-
-    if not services and not parts and _labour_chrg == 0 and _service_chrg == 0:
-        # Fallback row if no items at all
+    if not services and not parts:
+        # Fallback row if no items
         total_fb = float(quotation.total_amount or 0)
         rows.append([
             Paragraph("1", sTDr),
@@ -2571,47 +2538,30 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
     els.append(Spacer(1, 5*mm))
 
     # ═══ 4. TOTALS ════════════════════════════════════════════════════════════
-    subtotal        = float(getattr(quotation, "subtotal_amount", 0) or 0)
-    disc            = float(quotation.discount_amount or 0)
-    coupon_disc     = float(getattr(quotation, "coupon_discount", 0) or 0)
-    coupon_code_val = getattr(quotation, "coupon_code", None)
-    adj             = float(getattr(quotation, "adjustment_amount", 0) or 0)
-    tax_pct         = float(quotation.tax_percent or 0)
-    tax_amt         = float(quotation.tax_amount or 0)
-    total           = float(quotation.total_amount or 0)
-
-    # Derive subtotal if not set — must account for labour/service charges too
+    subtotal = float(getattr(quotation, "subtotal_amount", 0) or 0)
+    disc     = float(quotation.discount_amount or 0)
+    adj      = float(getattr(quotation, "adjustment_amount", 0) or 0)
+    tax_pct  = float(quotation.tax_percent or 0)
+    tax_amt  = float(quotation.tax_amount or 0)
+    total    = float(quotation.total_amount or 0)
+    # Derive subtotal if not set
     if subtotal <= 0:
-        _items_total = (sum(float(s.total_price) for s in services) +
-                        sum(float(p.total_price) for p in parts) +
-                        _labour_chrg + _service_chrg)
-        subtotal = _items_total if _items_total > 0 else (total - tax_amt + disc + coupon_disc + abs(adj))
+        subtotal = total - tax_amt + disc + adj
 
     # Determine GST mode from quotation
-    _qt_tax_mode   = str(getattr(quotation, "tax_mode", "B2C") or "B2C").upper()
+    _qt_tax_mode = str(getattr(quotation, "tax_mode", "B2C") or "B2C").upper()
     _qt_is_non_gst = (_qt_tax_mode == "NONE")
-
-    _red_style   = S("QDisc",  9, rl_colors.HexColor("#DC2626"), align=2)
-    _green_style = S("QAdj+",  9, rl_colors.HexColor("#16A34A"), align=2)
 
     tot_rows = []
     tot_rows.append([Paragraph("Subtotal", sTLbl),
                      Paragraph(f"INR {subtotal:,.2f}", sTVal)])
     if disc > 0:
         tot_rows.append([Paragraph("Discount", sTDLbl),
-                         Paragraph(f"- INR {disc:,.2f}", _red_style)])
-    if coupon_disc > 0:
-        _c_lbl = f"Coupon ({coupon_code_val})" if coupon_code_val else "Coupon Discount"
-        tot_rows.append([Paragraph(_c_lbl, sTDLbl),
-                         Paragraph(f"- INR {coupon_disc:,.2f}", _red_style)])
+                         Paragraph(f"- INR {disc:,.2f}",
+                                   S("QDisc", 9, rl_colors.HexColor("#DC2626"), align=2))])
     if adj != 0:
-        # Positive adjustment = extra charge (+), negative = credit/reduction (-)
-        if adj > 0:
-            tot_rows.append([Paragraph("Adjustment", sTLbl),
-                             Paragraph(f"+ INR {abs(adj):,.2f}", sTVal)])
-        else:
-            tot_rows.append([Paragraph("Adjustment", sTDLbl),
-                             Paragraph(f"- INR {abs(adj):,.2f}", _green_style)])
+        tot_rows.append([Paragraph("Adjustment", sTLbl),
+                         Paragraph(f"- INR {adj:,.2f}", S("QDisc", 9, rl_colors.HexColor("#DC2626"), align=2))])
     # Show tax only for GST quotations
     if not _qt_is_non_gst and tax_amt > 0:
         # Split into CGST+SGST for B2C/B2B style
@@ -2626,10 +2576,6 @@ def _build_quotation_pdf(quotation, booking, customer, domain_profile, services,
             lbl = f"Tax ({tax_pct:.0f}%)" if tax_pct > 0 else "Tax"
             tot_rows.append([Paragraph(lbl, sTLbl),
                              Paragraph(f"INR {tax_amt:,.2f}", sTVal)])
-    elif _qt_is_non_gst:
-        # Non-GST / Tax Exempted — show a clear note
-        tot_rows.append([Paragraph("Tax", sTLbl),
-                         Paragraph("NIL (Non-Taxable / Tax Exempted)", sTVal)])
 
     # Grand total row (highlighted)
     tot_rows.append([Paragraph("TOTAL AMOUNT", sTGLbl),
@@ -2726,13 +2672,6 @@ async def get_quotation_pdf(
     try:
         from app.models.domain import DomainProfile as _DomainProfile
         domain_id = getattr(booking, "domain_id", None)
-        # Fallback: if booking has no domain_id, pick the first active domain (single-tenant deployment)
-        if not domain_id:
-            fallback_dom = (await db.execute(
-                select(Domain).order_by(Domain.sort_order.asc()).limit(1)
-            )).scalar_one_or_none()
-            if fallback_dom:
-                domain_id = fallback_dom.id
         if domain_id:
             dp_obj = (await db.execute(
                 select(_DomainProfile).where(_DomainProfile.domain_id == domain_id)
@@ -2770,16 +2709,10 @@ async def get_quotation_pdf(
 
     # Load services and parts line items
     services = (await db.execute(
-        select(QuotationServiceItem).where(
-            QuotationServiceItem.quotation_id == quotation.id,
-            QuotationServiceItem.is_active == True,
-        )
+        select(QuotationServiceItem).where(QuotationServiceItem.quotation_id == quotation.id)
     )).scalars().all()
     parts = (await db.execute(
-        select(QuotationPartItem).where(
-            QuotationPartItem.quotation_id == quotation.id,
-            QuotationPartItem.is_active == True,
-        )
+        select(QuotationPartItem).where(QuotationPartItem.quotation_id == quotation.id)
     )).scalars().all()
 
     # Load CustomerAddress for full address display in PDF
